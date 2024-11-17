@@ -3,10 +3,12 @@ const { spawn } = require('child_process');
 const OpenAI = require('openai');
 const cors = require('cors');
 const config = require('./config/config');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const bodyParser = require('body-parser');
 const debug = require('debug')('app:server');
+const tempDir = path.join(__dirname, 'temp');
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -49,6 +51,11 @@ app.use((err, req, res, next) => {
 
 let currentData = null; // Store current data in memory
 
+// Ensure temp directory exists
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir);
+}
+
 // New endpoint to upload initial data
 app.post('/api/upload', async (req, res) => {
   try {
@@ -60,153 +67,369 @@ app.post('/api/upload', async (req, res) => {
   }
 });
 
+// Add this helper function
+function sanitizePythonCode(code) {
+  // Remove any markdown code blocks
+  code = code.replace(/```python\n|```\n|```/g, '').trim();
+  
+  // Split into lines
+  let lines = code.split('\n');
+  
+  // Filter out any standalone braces
+  lines = lines.filter(line => line.trim() !== '{' && line.trim() !== '}');
+  
+  // Ensure proper indentation
+  lines = lines.map(line => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('def ') || trimmed.startsWith('if ') || trimmed.startsWith('try:')) {
+      return line;  // Keep original indentation for control structures
+    }
+    return line.trimEnd();  // Remove trailing whitespace only
+  });
+  
+  return lines.join('\n');
+}
+
+// Add this helper function to detect visualization requests
+function isVisualizationRequest(question) {
+  const visualKeywords = [
+    'plot', 'graph', 'chart', 'visualize', 'visualization',
+    'histogram', 'scatter', 'bar', 'pie', 'line', 'box',
+    'distribution', 'trend', 'correlation', 'show'
+  ];
+  
+  return visualKeywords.some(keyword => 
+    question.toLowerCase().includes(keyword)
+  );
+}
+
+// Add these template prompts at the top of the file
+const dataProcessingPrompt = `You are a Python programming assistant that generates complete, executable scripts.
+Your code must:
+1. Include necessary imports (pandas, json, sys)
+2. Start directly with imports - no description text
+3. Process the ENTIRE input dataset, not just the sample rows
+4. Include proper error handling
+
+Example structure:
+import pandas as pd
+import json
+import sys
+
+def process_data(data):
+    # Convert input JSON to DataFrame
+    df = pd.DataFrame(data)
+    
+    # Your data processing code here
+    # Process the entire DataFrame, not just the sample
+    
+    return {
+        'data': df.to_dict('records'),
+        'changed_rows': []  # Indices of modified rows
+    }
+
+if __name__ == "__main__":
+    try:
+        input_data = json.loads(sys.argv[1])
+        result = process_data(input_data)
+        print(json.dumps(result))
+    except Exception as e:
+        print(json.dumps({
+            'error': str(e),
+            'data': [],
+            'changed_rows': []
+        }))`;
+
+const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
+Your code must:
+1. Include all necessary imports (pandas, json, sys, matplotlib, seaborn, io, base64)
+2. Start directly with imports - no description text
+3. Create clear and informative visualizations
+4. Include proper error handling
+
+Example structure:
+import pandas as pd
+import json
+import sys
+import matplotlib.pyplot as plt
+import seaborn as sns
+import io
+import base64
+import re  # Add regex support
+
+def create_visualization(df):
+    # Set style using matplotlib directly instead of seaborn
+    plt.style.use('default')  # Using default style instead of seaborn
+    plt.figure(figsize=(12, 6))
+    
+    # Create the visualization
+    # Your plotting code here using either plt or sns
+    
+    # Save plot to buffer
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight', dpi=300, 
+                facecolor='white', edgecolor='none')
+    buffer.seek(0)
+    image_base64 = base64.b64encode(buffer.getvalue()).decode()
+    plt.close()
+    return image_base64
+
+def process_data(data):
+    df = pd.DataFrame(data)
+    
+    # Your pre processing code to make the data ready for visualization
+
+    # Create visualization
+    plot_base64 = create_visualization(df)
+    
+    return {
+        'data': df.to_dict('records'),
+        'plot': plot_base64,
+        'changed_rows': []
+    }
+
+if __name__ == "__main__":
+    try:
+        input_data = json.loads(sys.argv[1])
+        result = process_data(input_data)
+        print(json.dumps(result))
+    except Exception as e:
+        print(json.dumps({
+            'error': str(e),
+            'data': [],
+            'changed_rows': []
+        }))`;
+
+// Add helper function to get random sample rows
+function getRandomSampleRows(data, sampleSize = 5) {
+  if (!data || data.length <= sampleSize) return data;
+  
+  const shuffled = [...data].sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, sampleSize);
+}
+
+// Add helper function to truncate data for command line
+async function prepareDataForPython(data) {
+  const jsonString = JSON.stringify(data);
+  const MAX_ARG_LENGTH = 30000;
+  
+  if (jsonString.length > MAX_ARG_LENGTH) {
+    const tempDataPath = path.join(tempDir, 'temp_data.json');
+    await fsPromises.writeFile(tempDataPath, jsonString);
+    return { type: 'file', path: tempDataPath };
+  }
+  
+  return { type: 'arg', data: jsonString };
+}
+
 // Modified analyze endpoint
 app.post('/api/analyze', async (req, res, next) => {
+  let tempDataPath = null;
+  let pythonProcess = null;
+  let responseHandled = false;
+  
   try {
-    debug('Analyzing data with params:', { 
-      questionLength: req.body.question?.length,
-      dataSize: req.body.data?.length
-    });
-
     const { question, data } = req.body;
+    const isVisualization = isVisualizationRequest(question);
+    const systemPrompt = isVisualization ? visualizationPrompt : dataProcessingPrompt;
     
-    // Use provided data or fallback to stored data
     if (data) {
-      currentData = data; // Update stored data if new data is provided
+      currentData = data;
     } else if (!currentData) {
       return res.status(400).json({ error: 'No data available. Please upload data first.' });
     }
 
-    // Prepare sample data for prompt
     const headers = Object.keys(currentData[0]);
-    const sampleRows = currentData.slice(0, 5);
-    const dataContext = {
-      headers,
-      sampleRows,
-      totalRows: currentData.length
-    };
+    const sampleRows = getRandomSampleRows(currentData, 5);
+    const preparedData = await prepareDataForPython(currentData);
+    tempDataPath = preparedData.type === 'file' ? preparedData.path : null;
+
+    const userPrompt = `Given this table structure:
+Headers: ${JSON.stringify(headers)}
+Random sample of data (showing 5 of ${currentData.length} total rows):
+${JSON.stringify(sampleRows, null, 2)}
+
+Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample.
+${isVisualization ? 'Create a visualization based on the request. Return the plot as a base64 encoded PNG image.' : 'Process the data according to the request.'}
+
+Task: ${question}
+
+Generate a complete Python script that processes the entire dataset and returns the result in the correct JSON format.`;
 
     const codeCompletion = await openai.chat.completions.create({
       messages: [
-        { 
-          role: "system", 
-          content: `You are a Python programming assistant that generates complete, executable scripts.
-                   Your code must:
-                   1. Include all necessary imports (pandas, json, sys)
-                   2. Define a main function that:
-                      - Takes input data via sys.argv[1] as JSON
-                      - Returns results as JSON via print()
-                   3. Include proper error handling
-                   4. Follow this exact structure:
-
-                   import pandas as pd
-                   import json
-                   import sys
-                   # Other Imports
-
-                   def modify_dataframe(data):
-                       # Your data processing code here
-                       # Must return: {'data': modified_df.to_dict('records'), 'changed_rows': changed_indices}
-
-                   if __name__ == "__main__":
-                       try:
-                           input_data = json.loads(sys.argv[1])
-                           result = modify_dataframe(input_data)
-                           print(json.dumps(result))
-                       except Exception as e:
-                           print(json.dumps({
-                               'error': str(e),
-                               'data': [],
-                               'changed_rows': []
-                           }))` 
-        },
-        { 
-          role: "user", 
-          content: `Given this table structure:
-                   Headers: ${JSON.stringify(headers)}
-                   Sample rows (first 5 of ${currentData.length} total rows):
-                   ${JSON.stringify(sampleRows, null, 2)}
-                   
-                   Task: ${question}
-                   
-                   Generate a complete Python script that processes this data and returns the result in the correct JSON format.` 
-        }
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
       ],
       model: "gpt-3.5-turbo",
     });
 
-    // Get the Python code and clean it
+    // Get and save Python code
     let pythonCode = codeCompletion.choices[0].message.content;
     pythonCode = pythonCode.replace(/```python\n|```\n|```/g, '').trim();
+    
+    // Modify Python code if using file input
+    if (preparedData.type === 'file') {
+      const tempDataFilePath = path.join(tempDir, 'temp_data.json');
+      await fsPromises.writeFile(tempDataFilePath, JSON.stringify(currentData));
+      
+      pythonCode = pythonCode.replace(
+        'input_data = json.loads(sys.argv[1])',
+        `input_data = json.load(open("${tempDataFilePath.replace(/\\/g, '\\\\')}"))`
+      );
+    }
 
-    // No need to wrap the code since the LLM will generate complete script
-    const tempFilePath = path.join(__dirname, 'temp_script.py');
-    await fs.writeFile(tempFilePath, pythonCode);
+    // Execute Python script with proper file handling
+    const tempFilePath = path.join(tempDir, `script_${Date.now()}.py`);
+    await fsPromises.writeFile(tempFilePath, pythonCode);
 
-    debug('Generated Python code:', pythonCode);
-
-    // Save and execute Python code
-    const pythonProcess = spawn('python', [
+    // Add debug logs for Python process
+    debug('Executing Python script with:', {
+      isFileInput: preparedData.type === 'file',
       tempFilePath,
-      JSON.stringify(currentData)
-    ]);
-    
-    let processedData = '';
-    let errorData = '';
-    
-    pythonProcess.stdout.on('data', (data) => {
-      processedData += data.toString();
-      debug('Python stdout:', {
-        raw: data.toString(),
-        length: data.toString().length
-      });
+      dataPath: tempDataPath,
+      codeLength: pythonCode.length
     });
 
-    pythonProcess.stderr.on('data', (data) => {
-      errorData += data.toString();
-      debug('Python stderr:', {
-        error: data.toString(),
-        stack: new Error().stack
+    pythonProcess = spawn('python', 
+      preparedData.type === 'file' 
+        ? [tempFilePath]
+        : [tempFilePath, preparedData.data]
+    );
+
+    pythonProcess.on('error', (error) => {
+      debug('Python process error:', {
+        error: error.message,
+        code: error.code,
+        stack: error.stack,
+        killed: pythonProcess.killed
       });
-    });
-
-    pythonProcess.on('close', async (code) => {
-      await fs.unlink(tempFilePath).catch(console.error);
-
-      debug('Python process exit code:', code);
-      debug('Final processed data:', processedData);
-      debug('Error data:', errorData);
-
-      if (code !== 0) {
-        return res.status(500).json({ 
-          error: `Python Error: ${errorData || 'Unknown error'}`,
-          details: errorData,
-          code: pythonCode 
-        });
-      }
-
-      try {
-        const result = JSON.parse(processedData);
-        currentData = result.data;
-
-        res.json({ 
-          data: result.data,
-          changedRows: result.changed_rows,
-          analysis: `Operation completed. ${result.changed_rows.length} rows were modified.`,
-          code: pythonCode,
-          error: result.error // Include any Python-side errors
-        });
-      } catch (error) {
-        res.status(500).json({ 
-          error: 'Failed to parse Python output: ' + error.message,
-          details: processedData,
+      
+      if (!responseHandled) {
+        responseHandled = true;
+        res.status(500).json({
+          error: 'Failed to execute Python script',
+          details: error.message,
           code: pythonCode
         });
       }
     });
+
+    let processedData = '';
+    let errorData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      processedData += chunk;
+      debug('Python stdout chunk:', {
+        length: chunk.length,
+        preview: chunk.substring(0, 200) + (chunk.length > 200 ? '...' : '')
+      });
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      errorData += chunk;
+      debug('Python stderr chunk:', {
+        error: chunk,
+        length: chunk.length
+      });
+    });
+
+    pythonProcess.on('close', async (code) => {
+      debug('Python process closed:', {
+        exitCode: code,
+        processedDataLength: processedData.length,
+        errorDataLength: errorData.length,
+        killed: pythonProcess.killed
+      });
+
+      // Clean up files first
+      try {
+        await Promise.all([
+          fsPromises.unlink(tempFilePath).catch(err => {
+            debug('Error cleaning up temp script:', err);
+            return err;
+          }),
+          preparedData.type === 'file' ? fsPromises.unlink(path.join(tempDir, 'temp_data.json')).catch(err => {
+            debug('Error cleaning up temp data:', err);
+            return err;
+          }) : Promise.resolve()
+        ]);
+        debug('Cleanup completed successfully');
+      } catch (cleanupError) {
+        debug('Cleanup error:', cleanupError);
+      }
+
+      // Only send response if we haven't already
+      if (!responseHandled) {
+        responseHandled = true;
+        
+        try {
+          const sanitizedData = processedData.replace(/: NaN/g, ': "NaN"');
+          const result = JSON.parse(sanitizedData);
+          
+          // For visualization requests, allow empty data if plot exists
+          if (isVisualization && result.plot) {
+            debug('Visualization generated without data changes');
+            return res.json({ 
+              data: currentData, // Keep current data unchanged
+              changedRows: [],
+              plot: result.plot,
+              analysis: 'Generated visualization',
+              code: pythonCode,
+            });
+          }
+          
+          // For non-visualization requests or when plot is missing
+          if (!result.error && result.data && result.data.length > 0) {
+            debug('Updating current data with new results');
+            currentData = result.data;
+            
+            return res.json({ 
+              data: result.data,
+              changedRows: result.changed_rows || [],
+              plot: result.plot,
+              analysis: result.plot 
+                ? 'Generated visualization' 
+                : `Operation completed. ${result.changed_rows?.length || 0} rows were modified.`,
+              code: pythonCode,
+            });
+          } else {
+            // If there's an error or no data, return error without modifying currentData
+            debug('Error in Python execution:', result.error);
+            return res.status(500).json({ 
+              error: result.error || 'No data returned from Python script',
+              details: processedData,
+              code: pythonCode
+            });
+          }
+        } catch (error) {
+          debug('Error parsing Python output:', {
+            error: error.message,
+            processedData: processedData.substring(0, 500) + (processedData.length > 500 ? '...' : '')
+          });
+          return res.status(500).json({ 
+            error: 'Failed to parse Python output: ' + error.message,
+            details: processedData,
+            code: pythonCode
+          });
+        }
+      }
+    });
+
   } catch (error) {
-    debug('Error in analyze endpoint:', error);
-    next(error);
+    if (!responseHandled) {
+      responseHandled = true;
+      if (pythonProcess) {
+        pythonProcess.kill();
+      }
+      if (tempDataPath) {
+        await fsPromises.unlink(tempDataPath).catch(console.error);
+      }
+      debug('Error in analyze endpoint:', error);
+      next(error);
+    }
   }
 });
 

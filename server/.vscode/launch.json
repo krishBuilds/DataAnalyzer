@@ -8,10 +8,24 @@
             "skipFiles": [
                 "<node_internals>/**"
             ],
-            "program": "${workspaceFolder}/server/src/app.js",
-            "envFile": "${workspaceFolder}/server/.env",
+            "program": "${workspaceFolder}/src/app.js",
+            "envFile": "${workspaceFolder}/.env",
             "console": "integratedTerminal",
-            "internalConsoleOptions": "neverOpen"
+            "internalConsoleOptions": "neverOpen",
+            "sourceMaps": true,
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ],
+            "env": {
+                "DEBUG": "app:*"
+            },
+            "outFiles": [
+                "${workspaceFolder}/src/**/*.js"
+            ],
+            "restart": true,
+            "runtimeExecutable": "nodemon",
+            "runtimeArgs": ["--inspect"]
         }
     ]
 }
