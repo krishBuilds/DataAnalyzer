@@ -1,0 +1,10 @@
+{
+  "ignore": [
+    "src/temp/*",
+    "src/temp"
+  ],
+  "watch": [
+    "src/**/*.js",
+    "!src/temp"
+  ]
+} 

@@ -361,19 +361,35 @@ Generate a complete Python script that processes the entire dataset and returns 
         debug('Cleanup error:', cleanupError);
       }
 
-      // Only send response if we haven't already
       if (!responseHandled) {
         responseHandled = true;
         
         try {
           const sanitizedData = processedData.replace(/: NaN/g, ': "NaN"');
-          const result = JSON.parse(sanitizedData);
+          let result;
+          
+          try {
+            // Try parsing as JSON first
+            result = JSON.parse(sanitizedData);
+          } catch (parseError) {
+            // If it's not JSON, it might be a simple output value
+            if (processedData.trim()) {
+              return res.json({ 
+                data: currentData, // Keep current data unchanged
+                changedRows: [],
+                analysis: processedData.trim(), // Use the raw output as analysis
+                code: pythonCode,
+              });
+            }
+            // If empty or invalid, treat as error
+            throw parseError;
+          }
           
           // For visualization requests, allow empty data if plot exists
           if (isVisualization && result.plot) {
             debug('Visualization generated without data changes');
             return res.json({ 
-              data: currentData, // Keep current data unchanged
+              data: currentData,
               changedRows: [],
               plot: result.plot,
               analysis: 'Generated visualization',
@@ -395,13 +411,20 @@ Generate a complete Python script that processes the entire dataset and returns 
                 : `Operation completed. ${result.changed_rows?.length || 0} rows were modified.`,
               code: pythonCode,
             });
-          } else {
-            // If there's an error or no data, return error without modifying currentData
-            debug('Error in Python execution:', result.error);
+          } else if (result.error) {
+            // Only treat as error if explicitly marked as error
             return res.status(500).json({ 
-              error: result.error || 'No data returned from Python script',
+              error: result.error,
               details: processedData,
               code: pythonCode
+            });
+          } else {
+            // If no error and no data changes, treat as informative message
+            return res.json({
+              data: currentData,
+              changedRows: [],
+              analysis: result.message || processedData.trim() || 'Operation completed',
+              code: pythonCode,
             });
           }
         } catch (error) {
@@ -409,11 +432,27 @@ Generate a complete Python script that processes the entire dataset and returns 
             error: error.message,
             processedData: processedData.substring(0, 500) + (processedData.length > 500 ? '...' : '')
           });
-          return res.status(500).json({ 
-            error: 'Failed to parse Python output: ' + error.message,
-            details: processedData,
-            code: pythonCode
-          });
+          
+          // Check if the output looks like an error message
+          const looksLikeError = errorData.length > 0 || 
+                                processedData.toLowerCase().includes('error') ||
+                                processedData.toLowerCase().includes('exception');
+          
+          if (looksLikeError) {
+            return res.status(500).json({ 
+              error: 'Failed to parse Python output: ' + error.message,
+              details: processedData,
+              code: pythonCode
+            });
+          } else {
+            // If it doesn't look like an error, treat as informative output
+            return res.json({
+              data: currentData,
+              changedRows: [],
+              analysis: processedData.trim(),
+              code: pythonCode,
+            });
+          }
         }
       }
     });
