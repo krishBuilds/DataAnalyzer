@@ -48,11 +48,12 @@ __pycache__/
 *.pyo
 *.pyd
 *.env
-venv/
+server/venv/  # Ignore the virtual environment directory located in the server directory
 env/
 ENV/
 env.bak/
 venv.bak/
+server/venv/Lib/*  # Ignore everything under the Lib directory in the server virtual environment
 
 # MacOS
 *.DS_Store
