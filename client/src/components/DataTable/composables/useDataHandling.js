@@ -4,13 +4,39 @@ import { fileHandlers } from '../utils/fileHandlers';
 import axios from 'axios';
 
 export function useDataHandling() {
-  const headers = ref([]);
   const tableData = ref([]);
+  const headers = ref([]);
   const changedRows = ref([]);
   const loading = ref(false);
   const error = ref(null);
   const history = ref([]);
   const currentHistoryIndex = ref(-1);
+
+  const addToHistory = (state) => {
+    if (currentHistoryIndex.value < history.value.length - 1) {
+      history.value = history.value.slice(0, currentHistoryIndex.value + 1);
+    }
+    
+    const newState = {
+      data: JSON.parse(JSON.stringify(state.data)),
+      headers: [...state.headers]
+    };
+    
+    history.value.push(newState);
+    currentHistoryIndex.value++;
+  };
+
+  const updateTableData = (newData) => {
+    if (newData && newData.length > 0) {
+      addToHistory({
+        data: tableData.value,
+        headers: headers.value
+      });
+      
+      tableData.value = newData;
+      headers.value = Object.keys(newData[0] || {});
+    }
+  };
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -41,20 +67,6 @@ export function useDataHandling() {
     } finally {
       loading.value = false;
     }
-  };
-
-  const addToHistory = (state) => {
-    if (currentHistoryIndex.value < history.value.length - 1) {
-      history.value = history.value.slice(0, currentHistoryIndex.value + 1);
-    }
-    
-    const newState = {
-      data: JSON.parse(JSON.stringify(state.data)),
-      headers: [...state.headers]
-    };
-    
-    history.value.push(newState);
-    currentHistoryIndex.value = history.value.length - 1;
   };
 
   const undo = () => {
@@ -127,8 +139,8 @@ export function useDataHandling() {
   };
 
   return {
-    headers,
     tableData,
+    headers,
     changedRows,
     loading,
     error,
@@ -138,6 +150,8 @@ export function useDataHandling() {
     cleanData,
     undo,
     redo,
-    exportData
+    exportData,
+    updateTableData,
+    addToHistory
   };
 } 

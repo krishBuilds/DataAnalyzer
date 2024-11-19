@@ -26,14 +26,51 @@
         <table v-if="tableData.length" class="data-grid">
           <thead>
             <tr>
-              <th v-for="header in headers" :key="header">{{ header }}</th>
+              <th v-for="(header, index) in headers" 
+                  :key="header"
+                  @dblclick="startEditingHeader(index)"
+                  :class="{ 'editing': isEditingHeader(index) }">
+                <div class="header-content">
+                  <template v-if="isEditingHeader(index)">
+                    <input
+                      type="text"
+                      v-model="headers[index]"
+                      @blur="stopEditingHeader"
+                      @keyup.enter="stopEditingHeader"
+                      @keyup.esc="cancelEditingHeader"
+                      v-focus
+                    />
+                  </template>
+                  <template v-else>
+                    {{ header }}
+                    <span class="remove-column" @click.stop="removeColumn(index)" title="Remove column">×</span>
+                  </template>
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(row, index) in tableData" 
-                :key="index"
-                :class="{ 'highlighted': changedRows.includes(index) }">
-              <td v-for="header in headers" :key="header">{{ row[header] }}</td>
+            <tr v-for="(row, rowIndex) in tableData" 
+                :key="rowIndex"
+                :class="{ 'highlighted': changedRows.includes(rowIndex) }">
+              <td v-for="header in headers" 
+                  :key="header"
+                  @dblclick="startEditing(rowIndex, header)"
+                  :class="{ 'editing': isEditing(rowIndex, header) }">
+                <template v-if="isEditing(rowIndex, header)">
+                  <input
+                    type="text"
+                    v-model="row[header]"
+                    @blur="stopEditing"
+                    @keyup.enter="stopEditing"
+                    @keyup.esc="cancelEditing"
+                    v-focus
+                  />
+                </template>
+                <template v-else>
+                  {{ row[header] }}
+                </template>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -95,9 +132,25 @@
               <div class="error-title">
                 <span class="error-icon">❌</span>
                 <span>Error</span>
-                <span v-if="message.error.line" class="error-location">at line {{ message.error.line }}</span>
+                <span v-if="message.error.line" class="error-location">
+                  at line {{ message.error.line }}
+                </span>
               </div>
-              <pre class="error-content">{{ message.error.message || message.error }}</pre>
+              
+              <!-- Python Error Traceback -->
+              <div v-if="message.error.pythonError" class="python-error-block">
+                <div class="error-header">Python Error:</div>
+                <pre class="error-content">{{ message.error.pythonError }}</pre>
+              </div>
+
+              <!-- Error Message -->
+              <pre class="error-content">{{ message.error.message }}</pre>
+              
+              <!-- Python File -->
+              <div v-if="message.error.pythonFile" class="python-file-block">
+                <div class="file-header">Python File:</div>
+                <pre class="file-content">{{ message.error.pythonFile }}</pre>
+              </div>
             </div>
           </div>
         </div>
@@ -152,6 +205,17 @@ export default {
       currentHistoryIndex: -1,
       selectedPlot: null,
       isRetrying: false,
+      editingCell: null,
+      editingHeader: null,
+      tempValue: null,
+    }
+  },
+  directives: {
+    focus: {
+      mounted(el) {
+        el.focus()
+        el.select()
+      }
     }
   },
   methods: {
@@ -301,11 +365,13 @@ export default {
 
     handleSuccessResponse(response) {
       if (response.data.data && response.data.data.length > 0) {
+        // Add current state to history before making changes
         this.addToHistory({
           data: this.tableData,
           headers: this.headers
         });
         
+        // Update the state after adding to history
         this.tableData = response.data.data;
         this.headers = Object.keys(response.data.data[0] || {});
         this.changedRows = response.data.changedRows || [];
@@ -329,6 +395,9 @@ export default {
 
     displayError(error) {
       let errorMessage = error.response?.data?.error || 'An error occurred';
+      let pythonFile = error.response?.data?.pythonFile;
+      let pythonError = error.response?.data?.pythonError;
+      
       if (error.request) {
         errorMessage = 'Server not responding. Please try again.';
       } else if (!error.response) {
@@ -337,11 +406,14 @@ export default {
 
       this.chatMessages.push({ 
         type: 'bot', 
-        text: errorMessage,
+        text: 'An error occurred while processing your request:',
         error: {
           message: errorMessage,
           details: error.response?.data?.details || error.message,
-          code: error.response?.data?.code
+          code: error.response?.data?.code,
+          pythonFile: pythonFile,
+          pythonError: pythonError,
+          line: error.response?.data?.line
         }
       });
 
@@ -376,7 +448,7 @@ export default {
       
       // Add new state
       this.history.push(newState);
-      this.currentHistoryIndex++;
+      this.currentHistoryIndex = this.history.length - 1;
     },
     
     undo() {
@@ -436,7 +508,115 @@ export default {
         XLSX.utils.book_append_sheet(wb, ws, 'Data');
         XLSX.writeFile(wb, 'data_export.xlsx');
       }
-    }
+    },
+
+    startEditing(rowIndex, header) {
+      this.tempValue = this.tableData[rowIndex][header]
+      this.editingCell = { rowIndex, header }
+    },
+
+    stopEditing() {
+      if (this.editingCell) {
+        const { rowIndex, header } = this.editingCell
+        const newValue = this.tableData[rowIndex][header]
+        
+        if (this.tempValue !== newValue) {
+          // Add to changed rows if not already included
+          if (!this.changedRows.includes(rowIndex)) {
+            this.changedRows.push(rowIndex)
+          }
+          
+          // Add to history
+          this.addToHistory({
+            data: this.tableData,
+            headers: this.headers
+          })
+        }
+      }
+      this.editingCell = null
+      this.tempValue = null
+    },
+
+    cancelEditing() {
+      if (this.editingCell) {
+        const { rowIndex, header } = this.editingCell
+        this.tableData[rowIndex][header] = this.tempValue
+      }
+      this.editingCell = null
+      this.tempValue = null
+    },
+
+    isEditing(rowIndex, header) {
+      return this.editingCell &&
+             this.editingCell.rowIndex === rowIndex &&
+             this.editingCell.header === header
+    },
+
+    startEditingHeader(index) {
+      this.tempValue = this.headers[index]
+      this.editingHeader = index
+    },
+
+    stopEditingHeader() {
+      if (this.editingHeader !== null) {
+        const newValue = this.headers[this.editingHeader]
+        const oldValue = this.tempValue
+        
+        if (oldValue !== newValue) {
+          // Update all row data with new header key
+          this.tableData = this.tableData.map(row => {
+            const newRow = { ...row }
+            newRow[newValue] = row[oldValue]
+            delete newRow[oldValue]
+            return newRow
+          })
+          
+          // Add to history
+          this.addToHistory({
+            data: this.tableData,
+            headers: this.headers
+          })
+        }
+      }
+      this.editingHeader = null
+      this.tempValue = null
+    },
+
+    cancelEditingHeader() {
+      if (this.editingHeader !== null) {
+        this.headers[this.editingHeader] = this.tempValue
+      }
+      this.editingHeader = null
+      this.tempValue = null
+    },
+
+    isEditingHeader(index) {
+      return this.editingHeader === index
+    },
+
+    removeColumn(index) {
+      const headerToRemove = this.headers[index];
+      
+      // Create copies for history
+      const newData = this.tableData.map(row => {
+        const newRow = { ...row };
+        delete newRow[headerToRemove];
+        return newRow;
+      });
+      
+      // Remove the header
+      const newHeaders = this.headers.filter((_, i) => i !== index);
+      
+      // Add current state to history before making changes
+      this.addToHistory({
+        data: this.tableData,
+        headers: this.headers
+      });
+      
+      // Update the data
+      this.tableData = newData;
+      this.headers = newHeaders;
+    },
   }
 }
 </script>
@@ -481,6 +661,7 @@ export default {
   position: sticky;
   top: 0;
   z-index: 1;
+  padding: 8px;
 }
 
 .chat-section {
@@ -903,5 +1084,178 @@ export default {
 
 .visualization-plot:hover {
   transform: scale(1.02);
+}
+
+.python-file-block {
+  margin-top: 12px;
+  background: #1e1e1e;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.file-header {
+  color: #61afef;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.file-content {
+  color: #abb2bf;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  background: #282c34;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.python-error-block {
+  margin-top: 8px;
+  margin-bottom: 12px;
+  background: #2c1215;
+  border: 1px solid #442326;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.error-header {
+  color: #ff6b6b;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.python-file-block {
+  margin-top: 12px;
+  background: #1e1e1e;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.file-header {
+  color: #61afef;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.file-content {
+  color: #abb2bf;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  background: #282c34;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.error-block {
+  margin-top: 8px;
+  background: #2c1215;
+  border: 1px solid #442326;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.error-title {
+  color: #ff4d4d;
+  font-weight: bold;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-icon {
+  font-size: 1.1em;
+}
+
+.error-location {
+  font-size: 0.9em;
+  color: #ff8080;
+  margin-left: auto;
+}
+
+.error-content {
+  color: #ffa6a6;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.9em;
+  background: rgba(255, 0, 0, 0.1);
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 0, 0, 0.2);
+}
+
+.data-grid td {
+  position: relative;
+  min-width: 100px;
+}
+
+.data-grid td.editing,
+.data-grid th.editing {
+  padding: 0;
+  border: 2px solid #000;
+}
+
+.data-grid td.editing input,
+.data-grid th.editing input {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  border: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.data-grid th.editing {
+  background-color: #f5f5f5;
+}
+
+.data-grid th.editing input {
+  background-color: #f5f5f5;
+  font-weight: bold;
+}
+
+.data-grid td:hover,
+.data-grid th:hover {
+  background-color: #f8f9fa;
+  cursor: cell;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: relative;
+  padding-right: 20px; /* Space for the remove button */
+}
+
+.remove-column {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  cursor: pointer;
+  color: #999;
+  font-size: 18px;
+  font-weight: bold;
+  padding: 0 5px;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.header-content:hover .remove-column {
+  opacity: 1;
+}
+
+.remove-column:hover {
+  color: #666;
 }
 </style>

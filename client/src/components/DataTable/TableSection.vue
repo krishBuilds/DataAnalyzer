@@ -76,5 +76,77 @@ export default {
 </script>
 
 <style scoped>
-/* Move all table-related styles here */
+.table-section {
+  flex: 2;
+  min-width: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-upload {
+  margin-bottom: 16px;
+}
+
+.upload-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.file-info {
+  color: #666;
+  font-size: 0.9em;
+}
+
+.table-wrapper {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-bottom: 16px;
+}
+
+.data-grid {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-grid th, .data-grid td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+
+.data-grid th {
+  background: #f8f9fa;
+  font-weight: bold;
+}
+
+.highlighted {
+  background-color: #fff3cd;
+}
+
+.button-container {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #007bff;
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.icon {
+  font-size: 1.2em;
+}
 </style> 

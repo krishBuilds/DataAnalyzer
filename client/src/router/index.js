@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import DataTable from '../components/DataTable.vue'
+import DataTable from '../components/DataTable/DataTable.vue'
 
 const routes = [
   {
