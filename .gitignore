@@ -60,3 +60,9 @@ server/venv/Lib/*  # Ignore everything under the Lib directory in the server vir
 
 # Windows
 Thumbs.db
+
+#chrome
+client/.chrome-debug-profile
+
+#temp files
+server/src/temp

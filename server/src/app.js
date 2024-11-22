@@ -109,7 +109,8 @@ Your code must:
 1. Include necessary imports (pandas, json, sys)
 2. Start directly with imports - no description text
 3. Process the ENTIRE input dataset, not just the sample rows
-4. Include proper error handling
+4. Try to standardize the data relevant if its unstructured for performing analysis over it by first analyzing the context/sample rows.
+5. Include proper error handling
 
 Example structure:
 import pandas as pd
@@ -145,7 +146,7 @@ Your code must:
 1. Include all necessary imports (pandas, json, sys, matplotlib, seaborn, io, base64)
 2. Start directly with imports - no description text
 3. Create clear and informative visualizations for normal user to understand
-4. Try to standardize the data relevant if its unstructured for processing over it
+4. Try to standardize the data relevant if its unstructured for performing analysis over it
 5. Include proper error handling
 
 Example structure:
@@ -212,15 +213,47 @@ function getRandomSampleRows(data, sampleSize = 5) {
 // Add helper function to truncate data for command line
 async function prepareDataForPython(data) {
   const jsonString = JSON.stringify(data);
-  const MAX_ARG_LENGTH = 30000;
+  const timestamp = Date.now();
+  const tempDataPath = path.join(tempDir, `data_${timestamp}.json`);
+  await fsPromises.writeFile(tempDataPath, jsonString, 'utf8');
+  return { type: 'file', path: tempDataPath };
+}
+
+// Centralized error handling function
+function handleErrorResponse(res, error, pythonCode, processedData = '', errorData = '') {
+  const errorMessage = error || 'Python execution failed';
+  const pythonError = errorData || processedData;
   
-  if (jsonString.length > MAX_ARG_LENGTH) {
-    const tempDataPath = path.join(tempDir, 'temp_data.json');
-    await fsPromises.writeFile(tempDataPath, jsonString);
-    return { type: 'file', path: tempDataPath };
+  res.json({
+    error: {
+      message: errorMessage,
+      pythonError: pythonError,
+      code: pythonCode
+    }
+  });
+}
+
+// Add this helper function at the top level
+async function cleanupFiles(...filePaths) {
+  const cleanupPromises = filePaths
+    .filter(Boolean) // Filter out null/undefined paths
+    .map(filePath => 
+      fsPromises.unlink(filePath)
+        .catch(err => {
+          debug('Error cleaning up file:', {
+            path: filePath,
+            error: err.message
+          });
+          return err;
+        })
+    );
+
+  try {
+    await Promise.all(cleanupPromises);
+    debug('All files cleaned up successfully');
+  } catch (error) {
+    debug('Cleanup error:', error);
   }
-  
-  return { type: 'arg', data: jsonString };
 }
 
 // Modified analyze endpoint
@@ -243,6 +276,7 @@ app.post('/api/analyze', async (req, res, next) => {
     const headers = Object.keys(currentData[0]);
     const sampleRows = getRandomSampleRows(currentData, 5);
     const preparedData = await prepareDataForPython(currentData);
+    //preparedData.type ='nofile';
     tempDataPath = preparedData.type === 'file' ? preparedData.path : null;
 
     const userPrompt = `Given this table structure:
@@ -272,17 +306,18 @@ Generate a complete Python script that processes the entire dataset and returns 
     // Modify Python code if using file input
     if (preparedData.type === 'file') {
       const tempDataFilePath = path.join(tempDir, 'temp_data.json');
-      await fsPromises.writeFile(tempDataFilePath, JSON.stringify(currentData));
+      await fsPromises.writeFile(tempDataFilePath, JSON.stringify(currentData), 'utf8');
       
       pythonCode = pythonCode.replace(
         'input_data = json.loads(sys.argv[1])',
-        `input_data = json.load(open("${tempDataFilePath.replace(/\\/g, '\\\\')}"))`
+        `with open("${tempDataFilePath.replace(/\\/g, '\\\\')}", 'r', encoding='utf-8') as f:
+            input_data = json.load(f)`
       );
     }
 
     // Execute Python script with proper file handling
     const tempFilePath = path.join(tempDir, `script_${Date.now()}.py`);
-    await fsPromises.writeFile(tempFilePath, pythonCode);
+    await fsPromises.writeFile(tempFilePath, pythonCode, 'utf8');
 
     // Add debug logs for Python process
     debug('Executing Python script with:', {
@@ -292,11 +327,9 @@ Generate a complete Python script that processes the entire dataset and returns 
       codeLength: pythonCode.length
     });
 
-    pythonProcess = spawn('python', 
-      preparedData.type === 'file' 
-        ? [tempFilePath]
-        : [tempFilePath, preparedData.data]
-    );
+    pythonProcess = spawn('python', [tempFilePath, tempDataPath], {
+      encoding: 'utf8'
+    });
 
     pythonProcess.on('error', (error) => {
       debug('Python process error:', {
@@ -308,16 +341,15 @@ Generate a complete Python script that processes the entire dataset and returns 
       
       if (!responseHandled) {
         responseHandled = true;
-        res.status(500).json({
-          error: 'Failed to execute Python script',
-          details: error.message,
-          code: pythonCode
-        });
+        handleErrorResponse(res, error, pythonCode);
       }
     });
 
     let processedData = '';
     let errorData = '';
+
+    pythonProcess.stdout.setEncoding('utf8');
+    pythonProcess.stderr.setEncoding('utf8');
 
     pythonProcess.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -326,6 +358,11 @@ Generate a complete Python script that processes the entire dataset and returns 
         length: chunk.length,
         preview: chunk.substring(0, 200) + (chunk.length > 200 ? '...' : '')
       });
+
+      /*if (!responseHandled) {
+        responseHandled = true;
+        handleErrorResponse(res, chunk, pythonCode);
+      }*/
     });
 
     pythonProcess.stderr.on('data', (data) => {
@@ -335,6 +372,11 @@ Generate a complete Python script that processes the entire dataset and returns 
         error: chunk,
         length: chunk.length
       });
+
+       if (!responseHandled) {
+         responseHandled = true;
+         handleErrorResponse(res, chunk, pythonCode);
+       }
     });
 
     pythonProcess.on('close', async (code) => {
@@ -345,44 +387,37 @@ Generate a complete Python script that processes the entire dataset and returns 
         killed: pythonProcess.killed
       });
 
-      // Clean up files first
-      try {
-        await Promise.all([
-          fsPromises.unlink(tempFilePath).catch(err => {
-            debug('Error cleaning up temp script:', err);
-            return err;
-          }),
-          preparedData.type === 'file' ? fsPromises.unlink(path.join(tempDir, 'temp_data.json')).catch(err => {
-            debug('Error cleaning up temp data:', err);
-            return err;
-          }) : Promise.resolve()
-        ]);
-        debug('Cleanup completed successfully');
-      } catch (cleanupError) {
-        debug('Cleanup error:', cleanupError);
-      }
+      // Clean up both script and data files
+      await cleanupFiles(
+        tempFilePath,
+        tempDataPath,
+        path.join(tempDir, 'temp_data.json')
+      );
 
       if (!responseHandled) {
         responseHandled = true;
+        
+        if (code !== 0 || errorData) {
+          return handleErrorResponse(res, new Error('Python execution failed'), pythonCode, processedData, errorData);
+        }
         
         try {
           const sanitizedData = processedData.replace(/: NaN/g, ': "NaN"');
           let result;
           
           try {
-            // Try parsing as JSON first
+            // Parse with proper encoding
             result = JSON.parse(sanitizedData);
           } catch (parseError) {
             // If it's not JSON, it might be a simple output value
             if (processedData.trim()) {
               return res.json({ 
-                data: currentData, // Keep current data unchanged
+                data: currentData,
                 changedRows: [],
-                analysis: processedData.trim(), // Use the raw output as analysis
+                analysis: processedData.trim(),
                 code: pythonCode,
               });
             }
-            // If empty or invalid, treat as error
             throw parseError;
           }
           
@@ -413,14 +448,8 @@ Generate a complete Python script that processes the entire dataset and returns 
               code: pythonCode,
             });
           } else if (result.error) {
-            // Only treat as error if explicitly marked as error
-            return res.status(500).json({ 
-              error: result.error,
-              details: processedData,
-              code: pythonCode
-            });
+            return handleErrorResponse(res, result.error, pythonCode, processedData);
           } else {
-            // If no error and no data changes, treat as informative message
             return res.json({
               data: currentData,
               changedRows: [],
@@ -434,19 +463,13 @@ Generate a complete Python script that processes the entire dataset and returns 
             processedData: processedData.substring(0, 500) + (processedData.length > 500 ? '...' : '')
           });
           
-          // Check if the output looks like an error message
           const looksLikeError = errorData.length > 0 || 
                                 processedData.toLowerCase().includes('error') ||
                                 processedData.toLowerCase().includes('exception');
           
           if (looksLikeError) {
-            return res.status(500).json({ 
-              error: 'Failed to parse Python output: ' + error.message,
-              details: processedData,
-              code: pythonCode
-            });
+            return handleErrorResponse(res, new Error('Python execution failed'), pythonCode, processedData, errorData);
           } else {
-            // If it doesn't look like an error, treat as informative output
             return res.json({
               data: currentData,
               changedRows: [],
@@ -464,13 +487,23 @@ Generate a complete Python script that processes the entire dataset and returns 
       if (pythonProcess) {
         pythonProcess.kill();
       }
-      if (tempDataPath) {
-        await fsPromises.unlink(tempDataPath).catch(console.error);
-      }
+      
+      // Clean up all temporary files
+      await cleanupFiles(
+        tempFilePath,
+        tempDataPath,
+        path.join(tempDir, 'temp_data.json')
+      );
+      
       debug('Error in analyze endpoint:', error);
-      next(error);
+      return handleErrorResponse(res, error, '');
     }
   }
+});
+
+app.use((req, res, next) => {
+  res.header('Content-Type', 'application/json; charset=utf-8');
+  next();
 });
 
 app.listen(config.port, () => {

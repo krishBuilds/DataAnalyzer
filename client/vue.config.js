@@ -1,4 +1,11 @@
-const { defineConfig } = require('@vue/cli-service')
-module.exports = defineConfig({
-  transpileDependencies: true
-})
+module.exports = {
+  configureWebpack: {
+    devtool: 'source-map',
+    output: {
+      devtoolModuleFilenameTemplate: info => {
+        const resourcePath = info.resourcePath.replace(/^\.\//, '')
+        return `webpack:///${resourcePath}`
+      }
+    }
+  }
+}

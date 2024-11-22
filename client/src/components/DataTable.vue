@@ -26,6 +26,7 @@
         <table v-if="tableData.length" class="data-grid">
           <thead>
             <tr>
+              <th class="row-number-header"></th>
               <th v-for="(header, index) in headers" 
                   :key="header"
                   @dblclick="startEditingHeader(index)"
@@ -52,11 +53,27 @@
           <tbody>
             <tr v-for="(row, rowIndex) in tableData" 
                 :key="rowIndex"
-                :class="{ 'highlighted': changedRows.includes(rowIndex) }">
-              <td v-for="header in headers" 
+                :class="{ 'highlighted': changedRows.includes(rowIndex) }"
+                @mousedown="startSelection(rowIndex, 0, 'row')"
+                @mouseover="updateSelection(rowIndex, headers.length - 1)"
+                @mouseup="stopSelection">
+              <td class="row-number" 
+                  @mousedown.stop="startSelection(rowIndex, -1, 'row')"
+                  @mouseover="updateSelection(rowIndex, -1)"
+                  @mouseup="stopSelection"
+                  :class="{ 
+                    'selected': isRowSelected(rowIndex),
+                    'in-selection-range': isInSelectionRange(rowIndex)
+                  }">
+                {{ rowIndex + 1 }}
+              </td>
+              <td v-for="(header, colIndex) in headers" 
                   :key="header"
                   @dblclick="startEditing(rowIndex, header)"
-                  :class="{ 'editing': isEditing(rowIndex, header) }">
+                  :class="{ 
+                    'editing': isEditing(rowIndex, header),
+                    'selected': isCellSelected(rowIndex, colIndex)
+                  }">
                 <template v-if="isEditing(rowIndex, header)">
                   <input
                     type="text"
@@ -119,10 +136,11 @@
             
             <!-- Code display -->
             <div v-if="message.code" class="code-block-container">
-              <div class="code-header">
+              <div class="code-header" @click="toggleCode(index)">
                 <span class="code-label">Generated Code</span>
+                <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index] }">▼</span>
               </div>
-              <div class="code-block-wrapper">
+              <div class="code-block-wrapper" v-show="expandedCodes[index]">
                 <pre class="code-block"><code>{{ message.code }}</code></pre>
               </div>
             </div>
@@ -132,24 +150,28 @@
               <div class="error-title">
                 <span class="error-icon">❌</span>
                 <span>Error</span>
-                <span v-if="message.error.line" class="error-location">
-                  at line {{ message.error.line }}
-                </span>
               </div>
               
               <!-- Python Error Traceback -->
-              <div v-if="message.error.pythonError" class="python-error-block">
+              <div v-if="message.error.pythonError" class="python-error">
                 <div class="error-header">Python Error:</div>
-                <pre class="error-content">{{ message.error.pythonError }}</pre>
+                <pre class="error-traceback">{{ message.error.pythonError }}</pre>
               </div>
 
-              <!-- Error Message -->
-              <pre class="error-content">{{ message.error.message }}</pre>
-              
-              <!-- Python File -->
-              <div v-if="message.error.pythonFile" class="python-file-block">
-                <div class="file-header">Python File:</div>
-                <pre class="file-content">{{ message.error.pythonFile }}</pre>
+              <!-- General Error Message -->
+              <div class="error-message">
+                {{ message.error.message || message.error }}
+              </div>
+
+              <!-- Code Block for Error -->
+              <div v-if="message.error.code" class="code-block-container">
+                <div class="code-header" @click="toggleCode(index + '_error')">
+                  <span class="code-label">Error Code</span>
+                  <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index + '_error'] }">▼</span>
+                </div>
+                <div class="code-block-wrapper" v-show="expandedCodes[index + '_error']">
+                  <pre class="code-block"><code>{{ message.error.code }}</code></pre>
+                </div>
               </div>
             </div>
           </div>
@@ -180,10 +202,11 @@
 <script>
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+//import { ref } from 'vue';
 
 const axiosInstance = axios.create({
   baseURL: 'http://localhost:3000',
-  timeout: 60000, // 60 second timeout
+  timeout: 300000, 
   maxContentLength: 100 * 1024 * 1024, // 100MB max content length
 });
 
@@ -208,6 +231,15 @@ export default {
       editingCell: null,
       editingHeader: null,
       tempValue: null,
+      selection: {
+        start: null,  // { row: number, col: number }
+        end: null,    // { row: number, col: number }
+        type: null,   // 'cell', 'row', 'column'
+        selectedCells: new Set(), // Store selected cell coordinates
+      },
+      isSelecting: false,
+      shiftPressed: false,
+      expandedCodes: {},
     }
   },
   directives: {
@@ -217,6 +249,15 @@ export default {
         el.select()
       }
     }
+  },
+  mounted() {
+    // Add keyboard event listeners
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keyup', this.handleKeyUp);
+  },
+  beforeUnmount() {
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('keyup', this.handleKeyUp);
   },
   methods: {
     async handleFileUpload(event) {
@@ -330,30 +371,31 @@ export default {
       this.userMessage = '';
       this.loading = true;
       this.error = null;
+      const response = await this.executeAnalysis(question);
 
-      try {
-        const response = await this.executeAnalysis(question);
+      if (!response.data.error) {
         this.handleSuccessResponse(response);
-      } catch (error) {
+      } else {
         // Display the original error first
-        this.displayError(error);
+        this.displayError(response);
 
         // Try once with modified prompt if it's a Python error
-        if (!this.isRetrying && error.response?.data?.error) {
+        if (!this.isRetrying && response?.data?.error?.message) {
           this.isRetrying = true;
-          try {
-            const modifiedQuestion = `${question} Please keep in mind the following error : "${error.response.data.error}"`;
+          
+            const modifiedQuestion = `${question} Please keep in mind the following error : "${response.data.error.message}"`;
             const retryResponse = await this.executeAnalysis(modifiedQuestion);
-            this.handleSuccessResponse(retryResponse);
-          } catch (retryError) {
-            // Don't display retry error since we already showed the original error
-            console.log('Retry attempt failed:', retryError);
-          }
+            if (!retryResponse.data.error) {
+              this.handleSuccessResponse(retryResponse);
+            } else {
+              // Display the original error first
+              this.displayError(retryResponse);
+            }
         }
-      } finally {
-        this.loading = false;
-        this.isRetrying = false;
       }
+      this.loading = false;
+      this.isRetrying = false;
+      
     },
 
     async executeAnalysis(question) {
@@ -393,28 +435,17 @@ export default {
       });
     },
 
-    displayError(error) {
-      let errorMessage = error.response?.data?.error || 'An error occurred';
-      let pythonFile = error.response?.data?.pythonFile;
-      let pythonError = error.response?.data?.pythonError;
+    displayError( response) {
+      //let errorMessage = 'An error occurred';
       
-      if (error.request) {
-        errorMessage = 'Server not responding. Please try again.';
-      } else if (!error.response) {
-        errorMessage = 'Failed to send request: ' + error.message;
-      }
-
       this.chatMessages.push({ 
         type: 'bot', 
         text: 'An error occurred while processing your request:',
         error: {
-          message: errorMessage,
-          details: error.response?.data?.details || error.message,
-          code: error.response?.data?.code,
-          pythonFile: pythonFile,
-          pythonError: pythonError,
-          line: error.response?.data?.line
-        }
+          message: response?.data?.error?.message,
+          details: response?.data?.message
+        },
+        code: response?.data?.error?.code
       });
 
       this.$nextTick(() => {
@@ -617,6 +648,111 @@ export default {
       this.tableData = newData;
       this.headers = newHeaders;
     },
+
+    handleKeyDown(e) {
+      if (e.key === 'Shift') {
+        this.shiftPressed = true;
+      }
+    },
+
+    handleKeyUp(e) {
+      if (e.key === 'Shift') {
+        this.shiftPressed = false;
+      }
+    },
+
+    startSelection(rowIndex, colIndex, type = 'cell') {
+      if (this.editingCell || this.editingHeader) return;
+      
+      // Only allow selection from row numbers
+      if (type !== 'row') return;
+      
+      this.isSelecting = true;
+      this.selection.type = 'row';
+      this.selection.start = { row: rowIndex, col: -1 };
+      this.selection.end = { row: rowIndex, col: -1 };
+      
+      if (!this.shiftPressed) {
+        this.selection.selectedCells.clear();
+      }
+      this.updateSelection();
+    },
+
+    updateSelection(rowIndex) {
+      if (!this.isSelecting || this.selection.type !== 'row') return;
+      
+      this.selection.end = { row: rowIndex, col: -1 };
+      this.calculateSelectedCells();
+    },
+
+    stopSelection() {
+      this.isSelecting = false;
+    },
+
+    calculateSelectedCells() {
+      if (this.selection.type !== 'row') return;
+
+      const startRow = Math.min(this.selection.start.row, this.selection.end.row);
+      const endRow = Math.max(this.selection.start.row, this.selection.end.row);
+
+      // Clear previous selection
+      this.selection.selectedCells.clear();
+
+      // Select all cells in the row range
+      for (let i = startRow; i <= endRow; i++) {
+        this.headers.forEach((_, j) => {
+          this.selection.selectedCells.add(`${i},${j}`);
+        });
+      }
+    },
+
+    isCellSelected(rowIndex, colIndex) {
+      return this.selection.selectedCells.has(`${rowIndex},${colIndex}`);
+    },
+
+    getSelectedData() {
+      const selectedData = [];
+      const selectedHeaders = new Set();
+      
+      this.selection.selectedCells.forEach(coord => {
+        const [row, col] = coord.split(',').map(Number);
+        const header = this.headers[col];
+        selectedHeaders.add(header);
+        
+        if (!selectedData[row]) {
+          selectedData[row] = {};
+        }
+        selectedData[row][header] = this.tableData[row][header];
+      });
+
+      return {
+        data: selectedData.filter(Boolean),
+        headers: Array.from(selectedHeaders)
+      };
+    },
+
+    isRowSelected(rowIndex) {
+      if (!this.isSelecting && this.selection.selectedCells.size === 0) {
+        return false;
+      }
+
+      const startRow = Math.min(this.selection.start.row, this.selection.end.row);
+      const endRow = Math.max(this.selection.start.row, this.selection.end.row);
+      return rowIndex >= startRow && rowIndex <= endRow;
+    },
+
+    isInSelectionRange(rowIndex) {
+      if (this.selection.type !== 'row' || !this.isSelecting) return false;
+      
+      const startRow = Math.min(this.selection.start.row, this.selection.end.row);
+      const endRow = Math.max(this.selection.start.row, this.selection.end.row);
+      return rowIndex >= startRow && rowIndex <= endRow;
+    },
+
+    toggleCode(index) {
+      this.expandedCodes[index] = !this.expandedCodes[index];
+    }
+
   }
 }
 </script>
@@ -796,7 +932,6 @@ export default {
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
 
-
 .code-header {
   padding: 8px 12px;
   background: #21252b;
@@ -804,12 +939,27 @@ export default {
   font-size: 0.9em;
   border-bottom: 1px solid #181a1f;
   display: flex;
+  justify-content: space-between;
   align-items: center;
+  cursor: pointer;
+  user-select: none;
 }
 
-.code-label {
-  color: #61afef;
-  font-weight: 500;
+.code-header:hover {
+  background: #2c313a;
+}
+
+.toggle-icon {
+  transition: transform 0.3s ease;
+}
+
+.toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.code-block-wrapper {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
 }
 
 .code-block {
@@ -820,46 +970,61 @@ export default {
   font-size: 0.9em;
   line-height: 1.5;
   background: #282c34;
+  overflow-x: auto;
 }
 
 .error-block {
-  margin-top: 8px;
-  background: #2c1215;
-  border: 1px solid #442326;
+  background: rgba(255, 240, 240, 0.7);
+  border: 1px solid #ffd7d7;
   border-radius: 6px;
   padding: 12px;
+  margin-top: 8px;
 }
 
 .error-title {
-  color: #ff4d4d;
-  font-weight: bold;
-  margin-bottom: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.error-icon {
-  font-size: 1.1em;
-}
-
-.error-location {
-  font-size: 0.9em;
   color: #ff8080;
-  margin-left: auto;
+  font-weight: bold;
+  margin-bottom: 12px;
 }
 
-.error-content {
-  color: #ffa6a6;
+.python-error {
+  margin: 12px 0;
+  background: #f8f8f8;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.error-header {
+  background: #fff0f0;
+  padding: 8px 12px;
+  color: #ff8080;
+  font-weight: 500;
+}
+
+.error-traceback {
   margin: 0;
+  padding: 12px;
   white-space: pre-wrap;
   word-wrap: break-word;
-  font-family: 'Courier New', Courier, monospace;
+  font-family: 'Fira Code', monospace;
   font-size: 0.9em;
-  background: rgba(255, 0, 0, 0.1);
-  padding: 8px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 0, 0, 0.2);
+  line-height: 1.5;
+  color: #666;
+  background: #fafafa;
+  overflow-x: auto;
+}
+
+.error-message {
+  color: #ff8080;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 8px;
+  line-height: 1.4;
+  overflow-wrap: break-word;
 }
 
 .highlighted {
@@ -1257,5 +1422,141 @@ export default {
 
 .remove-column:hover {
   color: #666;
+}
+
+.data-grid td.selected {
+  background-color: rgba(51, 153, 255, 0.2);
+  position: relative;
+}
+
+.data-grid td.selected::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 1px solid #3399ff;
+  pointer-events: none;
+}
+
+.data-grid tr:hover td {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* Prevent text selection while dragging */
+.data-grid {
+  user-select: none;
+}
+
+/* Allow text selection when not dragging */
+.data-grid:not(.selecting) {
+  user-select: text;
+}
+
+.row-number-header {
+  width: 25px !important;
+  min-width: 25px !important;
+  max-width: 40px !important;
+  background-color: #f8f9fa;
+  border-right: 2px solid #ddd;
+  user-select: none;
+  cursor: default;
+  padding: 0 !important;
+  text-align: center;
+}
+
+.row-number {
+  width: 25px !important;
+  min-width: 25px !important;
+  max-width: 40px !important;
+  background-color: #f8f9fa;
+  border-right: 2px solid #ddd;
+  text-align: center !important;
+  user-select: none;
+  color: #666;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  font-size: 0.9em;
+  cursor: pointer;
+  padding: 4px 2px !important;
+  text-align: center;
+}
+
+.row-number:hover {
+  background-color: #7497ba;
+}
+
+.row-number.selected {
+  background-color: #0078d4 !important;
+  color: white !important;
+}
+
+.row-number.in-selection-range {
+  background-color: #0078d4 !important;
+  color: white !important;
+}
+
+/* Update existing table styles */
+.table-wrapper {
+  position: relative;
+}
+
+.data-grid th:first-child,
+.data-grid td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
+.data-grid th.row-number-header {
+  z-index: 3;
+}
+
+.code-block-wrapper {
+  max-height: 300px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #4b5263 #282c34;
+}
+
+.code-block {
+  margin: 0;
+  padding: 12px 16px;
+  color: #abb2bf;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  background: #282c34;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.code-block-container {
+  margin-top: 8px;
+  background: #282c34;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.code-header {
+  padding: 8px 12px;
+  background: #21252b;
+  color: #abb2bf;
+  font-size: 0.9em;
+  border-bottom: 1px solid #181a1f;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle-icon {
+  transition: transform 0.3s ease;
+}
+
+.toggle-icon.expanded {
+  transform: rotate(180deg);
 }
 </style>
