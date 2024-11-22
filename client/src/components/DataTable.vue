@@ -94,20 +94,25 @@
       </div>
 
       <div class="button-container">
-        <button @click="cleanData" :disabled="!tableData.length || loading">
+        <button @click="cleanData" :disabled="!tableData.length || loading" class="primary">
+          <i class="fas fa-broom"></i>
           Clean Data
         </button>
         <button @click="undo" :disabled="currentHistoryIndex <= 0">
-          <span class="icon">↩</span> Undo
+          <i class="fas fa-undo"></i>
+          Undo
         </button>
         <button @click="redo" :disabled="currentHistoryIndex >= history.length - 1">
-          <span class="icon">↪</span> Redo
+          <i class="fas fa-redo"></i>
+          Redo
         </button>
         <div class="export-buttons">
           <button @click="exportData('csv')" :disabled="!tableData.length">
+            <i class="fas fa-file-csv"></i>
             Export CSV
           </button>
           <button @click="exportData('xlsx')" :disabled="!tableData.length">
+            <i class="fas fa-file-excel"></i>
             Export XLSX
           </button>
         </div>
@@ -761,15 +766,17 @@ export default {
 .data-container {
   display: flex;
   gap: 20px;
-  height: calc(100vh - 120px);
+  height: 100vh;
   padding: 10px 20px;
+  box-sizing: border-box;
 }
 
 .table-section {
-  flex: 1;
-  min-width: 0;
+  flex: 2;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  overflow: hidden;
 }
 
 .table-wrapper {
@@ -777,7 +784,8 @@ export default {
   overflow: auto;
   border: 1px solid #ddd;
   border-radius: 4px;
-  margin: 8px 0;
+  margin-bottom: 16px;
+  height: 100%;
 }
 
 .data-grid {
@@ -801,9 +809,12 @@ export default {
 }
 
 .chat-section {
-  width: 350px;
+  flex: 1;
+  min-width: 300px;
+  max-width: 500px;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .chat-container {
@@ -814,6 +825,7 @@ export default {
   height: 100%;
   border: 1px solid #ddd;
   text-align: left;
+  overflow: hidden;
 }
 
 .chat-container h3 {
@@ -825,7 +837,7 @@ export default {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 15px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -852,36 +864,51 @@ export default {
 }
 
 .chat-input {
-  padding: 15px;
-  border-top: 1px solid #ddd;
   display: flex;
-  gap: 10px;
-}
-
-.message-input {
-  flex: 1;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  resize: none;
-  height: 38px;
-  overflow: hidden;
-  line-height: 20px;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
+  gap: 8px;
+  padding: 12px;
+  background: #f5f5f5;
+  border-top: 1px solid #e0e0e0;
 }
 
 .chat-input button {
-  padding: 8px 15px;
-  background: #007bff;
+  padding: 8px 16px;
+  background-color: #000000;
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 80px;
+}
+
+.chat-input button:hover:not(:disabled) {
+  background-color: #333333;
+  transform: translateY(-1px);
 }
 
 .chat-input button:disabled {
-  background: #ccc;
+  background-color: #cccccc;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.message-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  resize: none;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.message-input:focus {
+  outline: none;
+  border-color: #000000;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
 }
 
 .file-upload {
@@ -1038,119 +1065,62 @@ export default {
 
 .button-container {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   margin: 8px 0;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  max-width: fit-content;
 }
 
 .button-container button {
-  padding: 8px 15px;
-  border: none;
-  border-radius: 4px;
-  background: #007bff;
-  color: white;
-  cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 4px;
+  border: 1px solid #e0e0e0;
+  background: white;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  height: 32px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.button-container button:hover {
+  background: #f5f5f5;
+  border-color: #d0d0d0;
 }
 
 .button-container button:disabled {
-  background: #ccc;
+  background: #f5f5f5;
+  color: #999;
   cursor: not-allowed;
+  border-color: #e0e0e0;
 }
 
-.error-block {
-  margin-top: 8px;
-  background: #fee;
-  border: 1px solid #fcc;
-  border-radius: 4px;
-  padding: 8px;
+.button-container button i {
+  font-size: 14px;
 }
 
-.error-title {
-  color: #c00;
-  font-weight: bold;
-  margin-bottom: 4px;
+/* Style for primary actions */
+.button-container button.primary {
+  background: #007bff;
+  color: white;
+  border-color: #0056b3;
 }
 
-.error-content {
-  color: #666;
-  margin: 0;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.code-block-container {
-  margin-top: 8px;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-}
-
-.code-header {
-  padding: 8px 12px;
-  background: #eef;
-  border-bottom: 1px solid #ddd;
-  font-weight: bold;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.toggle-icon {
-  transition: transform 0.2s;
-}
-
-.toggle-icon.expanded {
-  transform: rotate(180deg);
-}
-
-.code-block-wrapper {
-  overflow-x: auto;
-  margin: 0;
-  background: #282c34;
-}
-
-.code-block {
-  margin: 0;
-  padding: 8px;
-  background: #282c34;
-  color: #d4d4d4;
-  font-family: 'Courier New', Courier, monospace;
-  white-space: pre;
-  min-width: 100%;
-}
-
-.message {
-  padding: 10px;
-  border-radius: 8px;
-  max-width: 75%;
-}
-
-.message.bot {
-  background: #e9ecef;
-  color: #212529;
-  align-self: flex-start;
-}
-
-.message-text {
-  margin-bottom: 8px;
-}
-
-.slide-enter-active, .slide-leave-active {
-  transition: all 0.3s ease;
-}
-
-.slide-enter-from, .slide-leave-to {
-  transform: translateY(-10px);
-  opacity: 0;
+.button-container button.primary:hover {
+  background: #0056b3;
 }
 
 .export-buttons {
   display: flex;
-  gap: 5px;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .plot-container {
