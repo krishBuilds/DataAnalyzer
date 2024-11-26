@@ -143,52 +143,65 @@ if __name__ == "__main__":
 
 const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
 Your code must:
-1. Include all necessary imports (pandas, json, sys, matplotlib, seaborn, io, base64)
+1. Include all necessary imports (pandas, json, sys, plotly)
 2. Start directly with imports - no description text
-3. Create clear and informative visualizations for normal user to understand
-4. Try to standardize the data relevant if its unstructured for performing analysis over it
-5. Include proper error handling
+3. Create clear and informative visualizations
+4. Save plots as HTML files and return null for image field
+5. Use plotly for visualization
 
 Example structure:
 import pandas as pd
 import json
 import sys
-import matplotlib.pyplot as plt
-import seaborn as sns
-import io
-import base64
-import re  # Add regex support
+import plotly.express as px
+import plotly.graph_objects as go
+import os
 
 def create_visualization(df):
-    # Set style using matplotlib directly instead of seaborn
-    plt.style.use('default')  # Using default style instead of seaborn
-    plt.figure(figsize=(12, 6))
-    
-    # Create the visualization
-    # Your plotting code here using either plt or sns
-    
-    # Save plot to buffer
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format='png', bbox_inches='tight', dpi=300, 
-                facecolor='white', edgecolor='none')
-    buffer.seek(0)
-    image_base64 = base64.b64encode(buffer.getvalue()).decode()
-    plt.close()
-    return image_base64
+    try:
+        # Create plot using plotly
+        fig = px.scatter(df, x=df.columns[0], y=df.columns[1])  # Example plot
+        
+        # Update layout for better appearance
+        fig.update_layout(
+            template='plotly_white',
+            title_x=0.5,
+            margin=dict(t=50, l=50, r=50, b=50)
+        )
+        
+        # Save as HTML only
+        plot_path = 'plot.html'
+        fig.write_html(plot_path)
+        
+        return None, plot_path
+            
+    except Exception as e:
+        raise Exception(f"Error creating visualization: {str(e)}")
+    finally:
+        # Cleanup
+        if 'fig' in locals():
+            fig.data = []
+            fig.layout = {}
+            del fig
 
 def process_data(data):
-    df = pd.DataFrame(data)
-    
-    # Your pre processing code to make the data ready for visualization
-
-    # Create visualization
-    plot_base64 = create_visualization(df)
-    
-    return {
-        'data': df.to_dict('records'),
-        'plot': plot_base64,
-        'changed_rows': []
-    }
+    try:
+        df = pd.DataFrame(data)
+        plot_base64, html_path = create_visualization(df)
+        
+        return {
+            'data': df.to_dict('records'),
+            'plot': None,  # Always return None for plot image
+            'plot_path': html_path,
+            'changed_rows': []
+        }
+    except Exception as e:
+        print(json.dumps({
+            'error': str(e),
+            'data': [],
+            'changed_rows': []
+        }))
+        sys.exit(1)
 
 if __name__ == "__main__":
     try:
@@ -200,7 +213,8 @@ if __name__ == "__main__":
             'error': str(e),
             'data': [],
             'changed_rows': []
-        }))`;
+        }))
+        sys.exit(1)`
 
 // Add helper function to get random sample rows
 function getRandomSampleRows(data, sampleSize = 5) {
