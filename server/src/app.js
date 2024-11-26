@@ -9,6 +9,9 @@ const path = require('path');
 const bodyParser = require('body-parser');
 const debug = require('debug')('app:server');
 const tempDir = path.join(__dirname, 'temp');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -146,7 +149,7 @@ Your code must:
 1. Include all necessary imports (pandas, json, sys, plotly)
 2. Start directly with imports - no description text
 3. Create clear and informative visualizations
-4. Save plots as HTML files and return null for image field
+4. Save plots as interactive HTML file and return plot_html and dont add any image related code
 5. Use plotly for visualization
 
 Example structure:
@@ -155,12 +158,11 @@ import json
 import sys
 import plotly.express as px
 import plotly.graph_objects as go
-import os
 
 def create_visualization(df):
     try:
-        # Create plot using plotly
-        fig = px.scatter(df, x=df.columns[0], y=df.columns[1])  # Example plot
+        # Create plot using plotly, example plot below
+        # fig = px.scatter(df, x=df.columns[0], y=df.columns[1])  # Example plot
         
         # Update layout for better appearance
         fig.update_layout(
@@ -169,11 +171,15 @@ def create_visualization(df):
             margin=dict(t=50, l=50, r=50, b=50)
         )
         
-        # Save as HTML only
+        # Save as HTML
         plot_path = 'plot.html'
-        fig.write_html(plot_path)
+        fig.write_html(plot_path, full_html=True, include_plotlyjs=True)
         
-        return None, plot_path
+        # Read the HTML content
+        with open(plot_path, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        
+        return html_content
             
     except Exception as e:
         raise Exception(f"Error creating visualization: {str(e)}")
@@ -187,12 +193,12 @@ def create_visualization(df):
 def process_data(data):
     try:
         df = pd.DataFrame(data)
-        plot_base64, html_path = create_visualization(df)
+        
+        html_content = create_visualization(df)
         
         return {
             'data': df.to_dict('records'),
-            'plot': None,  # Always return None for plot image
-            'plot_path': html_path,
+            'plot_html': html_content,  # Return full HTML content
             'changed_rows': []
         }
     except Exception as e:
@@ -436,12 +442,12 @@ Generate a complete Python script that processes the entire dataset and returns 
           }
           
           // For visualization requests, allow empty data if plot exists
-          if (isVisualization && result.plot) {
-            debug('Visualization generated without data changes');
+          if (isVisualization && result.plot_html) {
+            debug('Visualization generated');
             return res.json({ 
               data: currentData,
               changedRows: [],
-              plot: result.plot,
+              plot_html: result.plot_html,  // This will now contain the HTML content
               analysis: 'Generated visualization',
               code: pythonCode,
             });
@@ -455,8 +461,8 @@ Generate a complete Python script that processes the entire dataset and returns 
             return res.json({ 
               data: result.data,
               changedRows: result.changed_rows || [],
-              plot: result.plot,
-              analysis: result.plot 
+              plot_html: result.plot_html,
+              analysis: result.plot_html 
                 ? 'Generated visualization' 
                 : `Operation completed. ${result.changed_rows?.length || 0} rows were modified.`,
               code: pythonCode,
@@ -511,6 +517,72 @@ Generate a complete Python script that processes the entire dataset and returns 
       
       debug('Error in analyze endpoint:', error);
       return handleErrorResponse(res, error, '');
+    }
+  }
+});
+
+// Add new endpoint for converting plot HTML to image
+app.post('/api/convert-plot', async (req, res) => {
+  const { html } = req.body;
+  const tempHtmlPath = path.join(tempDir, `plot_${Date.now()}.html`).replace(/\\/g, '\\\\');
+  const tempImagePath = path.join(tempDir, `plot_${Date.now()}.png`).replace(/\\/g, '\\\\');
+  const scriptPath = path.join(tempDir, `convert_${Date.now()}.py`);
+
+  try {
+    // Save HTML to temporary file
+    await fsPromises.writeFile(tempHtmlPath, html);
+
+    // Create Python script to convert HTML to image
+    const pythonCode = `
+import plotly.io as pio
+import base64
+import sys
+
+try:
+    # Load the HTML file
+    with open(r"${tempHtmlPath}", "r", encoding='utf-8') as f:
+        html_content = f.read()
+
+    # Use plotly.io to render the figure
+    fig = pio.from_html(html_content)
+
+    # Save the figure as an image
+    fig.write_image(r"${tempImagePath}", format="png", scale=2)  # scale=2 for better quality
+
+    # Read the image and convert to base64
+    with open(r"${tempImagePath}", "rb") as image_file:
+        encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+    
+    print(encoded_image)
+except Exception as e:
+    print(f"Error: {str(e)}", file=sys.stderr)
+    sys.exit(1)
+`;
+
+    // Write Python script to temp file
+    await fsPromises.writeFile(scriptPath, pythonCode);
+
+    // Execute Python script
+    const { stdout, stderr } = await execAsync(`python "${scriptPath}"`);
+    
+    if (stderr) {
+      throw new Error(stderr);
+    }
+
+    res.json({ image: stdout.trim() });
+
+  } catch (error) {
+    console.error('Error converting plot:', error);
+    res.status(500).json({ 
+      error: 'Failed to convert plot to image',
+      details: error.message 
+    });
+  } finally {
+    // Clean up temporary files
+    try {
+      await cleanupFiles(tempHtmlPath, tempImagePath, scriptPath);
+    } catch (cleanupError) {
+      console.error('Error cleaning up files:', cleanupError);
     }
   }
 });

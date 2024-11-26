@@ -130,16 +130,17 @@
             <div class="message-text">{{ message.text }}</div>
             
             <!-- Plot display -->
-            <div v-if="message.plot" class="plot-container">
-              <img 
-                :src="`data:image/png;base64,${message.plot}`" 
-                alt="Data Visualization" 
-                class="visualization-plot"
-                @click="selectedPlot = message.plot"
-              />
+            <div v-if="message.plot_html" class="plot-container">
+              <div class="plot-preview"
+                   @click="openPlotModal(message.plot_html)">
+                <div class="preview-content">
+                  <i class="fas fa-chart-bar"></i>
+                  <span>Click to view visualization</span>
+                </div>
+              </div>
             </div>
             
-            <!-- Code display -->
+            <!-- Code block if present -->
             <div v-if="message.code" class="code-block-container">
               <div class="code-header" @click="toggleCode(index)">
                 <span class="code-label">Generated Code</span>
@@ -196,9 +197,10 @@
       </div>
     </div>
 
-    <div v-if="selectedPlot" class="modal" @click="selectedPlot = null">
+    <div v-if="selectedPlotHtml" class="modal" @click="closePlotModal">
       <div class="modal-content" @click.stop>
-        <img :src="`data:image/png;base64,${selectedPlot}`" alt="Data Visualization" class="modal-image">
+        <button class="close-button" @click="closePlotModal">&times;</button>
+        <div class="plot-modal-container" ref="modalPlot"></div>
       </div>
     </div>
   </div>
@@ -207,7 +209,7 @@
 <script>
 import axios from 'axios';
 import * as XLSX from 'xlsx';
-//import { ref } from 'vue';
+import { nextTick } from 'vue';
 
 const axiosInstance = axios.create({
   baseURL: 'http://localhost:3000',
@@ -231,7 +233,7 @@ export default {
       previousTableState: null,
       history: [],
       currentHistoryIndex: -1,
-      selectedPlot: null,
+      selectedPlotHtml: null,
       isRetrying: false,
       editingCell: null,
       editingHeader: null,
@@ -245,6 +247,7 @@ export default {
       isSelecting: false,
       shiftPressed: false,
       expandedCodes: {},
+      plotImages: {}, // Store base64 images for each plot
     }
   },
   directives: {
@@ -410,34 +413,45 @@ export default {
       });
     },
 
-    handleSuccessResponse(response) {
-      if (response.data.data && response.data.data.length > 0) {
-        // Add current state to history before making changes
-        this.addToHistory({
-          data: this.tableData,
-          headers: this.headers
-        });
+    async handleSuccessResponse(response) {
+      try {
+        // Handle data updates first (restore previous functionality)
+        if (response.data.data && response.data.data.length > 0) {
+          // Add current state to history before making changes
+          this.addToHistory({
+            data: this.tableData,
+            headers: this.headers
+          });
+          
+          // Update the state after adding to history
+          this.tableData = response.data.data;
+          this.headers = Object.keys(response.data.data[0] || {});
+          this.changedRows = response.data.changedRows || [];
+        }
+
+        // Create bot message
+        const botMessage = {
+          type: 'bot',
+          text: response.data.analysis,
+          code: response.data.code
+        };
+
+        // Add plot HTML if present
+        if (response.data.plot_html) {
+          botMessage.plot_html = response.data.plot_html;
+        }
+
+        // Add message to chat
+        this.chatMessages.push(botMessage);
         
-        // Update the state after adding to history
-        this.tableData = response.data.data;
-        this.headers = Object.keys(response.data.data[0] || {});
-        this.changedRows = response.data.changedRows || [];
+        // Update chat scroll position
+        await nextTick();
+        if (this.$refs.chatMessages) {
+          this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        }
+      } catch (error) {
+        console.error('Error in handleSuccessResponse:', error);
       }
-
-      const botMessage = {
-        type: 'bot',
-        text: response.data.analysis,
-        code: response.data.code
-      };
-
-      if (response.data.plot) {
-        botMessage.plot = response.data.plot;
-      }
-
-      this.chatMessages.push(botMessage);
-      this.$nextTick(() => {
-        this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
-      });
     },
 
     displayError( response) {
@@ -756,8 +770,42 @@ export default {
 
     toggleCode(index) {
       this.expandedCodes[index] = !this.expandedCodes[index];
-    }
+    },
 
+    async openPlotModal(plotHtml) {
+      try {
+        this.selectedPlotHtml = plotHtml;
+        await nextTick();
+        
+        const modalPlot = this.$refs.modalPlot;
+        if (modalPlot) {
+          // Create an iframe to isolate the plot HTML
+          const iframe = document.createElement('iframe');
+          iframe.style.width = '100%';
+          iframe.style.height = '100%';
+          iframe.style.border = 'none';
+          
+          modalPlot.innerHTML = ''; // Clear previous content
+          modalPlot.appendChild(iframe);
+          
+          // Write the HTML content to the iframe
+          const iframeDoc = iframe.contentWindow.document;
+          iframeDoc.open();
+          iframeDoc.write(plotHtml);
+          iframeDoc.close();
+        }
+      } catch (error) {
+        console.error('Error opening plot modal:', error);
+      }
+    },
+
+    closePlotModal() {
+      this.selectedPlotHtml = null;
+      const modalPlot = this.$refs.modalPlot;
+      if (modalPlot) {
+        modalPlot.innerHTML = '';
+      }
+    }
   }
 }
 </script>
@@ -1108,13 +1156,21 @@ export default {
 
 /* Style for primary actions */
 .button-container button.primary {
-  background: #007bff;
-  color: white;
-  border-color: #0056b3;
+  background: white;
+  color: #666;
+  border: 1px solid #e0e0e0;
 }
 
 .button-container button.primary:hover {
-  background: #0056b3;
+  background: #f5f5f5;
+  border-color: #d0d0d0;
+}
+
+.button-container button.primary:disabled {
+  background: #f5f5f5;
+  color: #999;
+  cursor: not-allowed;
+  border-color: #e0e0e0;
 }
 
 .export-buttons {
@@ -1125,18 +1181,100 @@ export default {
 
 .plot-container {
   margin: 12px 0;
-  padding: 16px;
+  padding: 8px;
   background: white;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  width: calc(100% - 16px); /* Account for padding */
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.plot-preview {
+  cursor: pointer;
+  padding: 12px;
+  background: #f8f9fa;
+  border: 1px dashed #dee2e6;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  position: relative;
+  background: white;
+  padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  width: 90vw;
+  height: 90vh;
   overflow: hidden;
 }
 
-.visualization-plot {
-  max-width: 100%;
-  height: auto;
-  display: block;
-  margin: 0 auto;
+.plot-modal-container {
+  width: 100%;
+  height: 100%;
+}
+
+.close-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #666;
+  cursor: pointer;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s;
+}
+
+.close-button:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.plot-preview {
+  cursor: pointer;
+  padding: 20px;
+  background: #f8f9fa;
+  border: 1px dashed #dee2e6;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.plot-preview:hover {
+  background: #e9ecef;
+}
+
+.preview-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #6c757d;
+}
+
+.preview-content i {
+  font-size: 1.2em;
 }
 
 .error-block {
@@ -1170,6 +1308,8 @@ export default {
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  overflow: hidden;
+  width: 100%;
 }
 
 .visualization-plot {
@@ -1528,5 +1668,80 @@ export default {
 
 .toggle-icon.expanded {
   transform: rotate(180deg);
+}
+
+.plot-interactive :deep(.js-plotly-plot) {
+  width: 100% !important;
+}
+
+.plot-image {
+  width: 100%;
+  height: auto;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.plot-image:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.plot-html-fallback {
+  cursor: pointer;
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.plot-container {
+  margin: 12px 0;
+  padding: 16px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  overflow: hidden;
+  width: 100%;
+}
+
+.plot-image {
+  width: 100%;
+  height: auto;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.plot-interactive {
+  width: 100%;
+  height: 300px;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.plot-interactive:hover {
+  transform: scale(1.02);
+}
+
+.plot-interactive :deep(.js-plotly-plot) {
+  width: 100% !important;
+  height: 100% !important;
 }
 </style>
