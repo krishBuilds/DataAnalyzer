@@ -222,12 +222,51 @@ if __name__ == "__main__":
         }))
         sys.exit(1)`
 
-// Add helper function to get random sample rows
-function getRandomSampleRows(data, sampleSize = 5) {
-  if (!data || data.length <= sampleSize) return data;
+// Modify the getRandomSampleRows function to handle mixed sampling
+function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
+  if (!data || !data.length) return [];
   
-  const shuffled = [...data].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, sampleSize);
+  let selectedSamples = [];
+  let unselectedSamples = [];
+  
+  // Convert data to array if it's not already
+  const dataArray = Array.isArray(data) ? data : Object.values(data);
+  
+  if (selectedIndices.length > 0) {
+    // Get exactly 2 samples from selected rows (or all if less than 2)
+    const selectedData = selectedIndices.map(index => ({
+      ...dataArray[index],
+      _rowIndex: index,
+      _isSelected: true
+    }));
+    selectedSamples = selectedData
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 2);
+    
+    // Get exactly 3 samples from unselected rows
+    const unselectedData = dataArray
+      .filter((_, index) => !selectedIndices.includes(index))
+      .map((row, idx) => ({
+        ...row,
+        _rowIndex: idx,
+        _isSelected: false
+      }));
+    unselectedSamples = unselectedData
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 3);
+  } else {
+    // If no selection, get 5 samples from the full dataset
+    unselectedSamples = dataArray
+      .map((row, idx) => ({
+        ...row,
+        _rowIndex: idx,
+        _isSelected: false
+      }))
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 5);
+  }
+  
+  return [...selectedSamples, ...unselectedSamples];
 }
 
 // Add helper function to truncate data for command line
@@ -283,7 +322,7 @@ app.post('/api/analyze', async (req, res, next) => {
   let responseHandled = false;
   
   try {
-    const { question, data } = req.body;
+    const { question, data, selectedRows, selectedIndices } = req.body;
     const isVisualization = isVisualizationRequest(question);
     const systemPrompt = isVisualization ? visualizationPrompt : dataProcessingPrompt;
     
@@ -294,22 +333,54 @@ app.post('/api/analyze', async (req, res, next) => {
     }
 
     const headers = Object.keys(currentData[0]);
-    const sampleRows = getRandomSampleRows(currentData, 5);
+    const sampleRows = getRandomSampleRows(currentData, selectedIndices);
+    
+    // Separate samples and clean up metadata
+    const selectedSamples = sampleRows
+      .filter(row => row._isSelected)
+      .map(row => {
+        const { _isSelected, _rowIndex, ...cleanRow } = row;
+        return { row: _rowIndex + 1, data: cleanRow };
+      });
+    
+    const unselectedSamples = sampleRows
+      .filter(row => !row._isSelected)
+      .map(row => {
+        const { _isSelected, _rowIndex, ...cleanRow } = row;
+        return { row: _rowIndex + 1, data: cleanRow };
+      });
+
     const preparedData = await prepareDataForPython(currentData);
-    //preparedData.type ='nofile';
     tempDataPath = preparedData.type === 'file' ? preparedData.path : null;
+
+    // Calculate the range of selected rows if any
+    let selectionInfo = '';
+    if (selectedIndices?.length > 0) {
+      const min = Math.min(...selectedIndices);
+      const max = Math.max(...selectedIndices);
+      selectionInfo = `Selected rows: ${selectedIndices.length} rows (range: ${min+1}-${max+1})`;
+    }
 
     const userPrompt = `Given this table structure:
 Headers: ${JSON.stringify(headers)}
-Random sample of data (showing 5 of ${currentData.length} total rows):
-${JSON.stringify(sampleRows, null, 2)}
+${selectedIndices?.length > 0 
+  ? `Selected rows (rows are indexed from 1 and not 0): ${selectedIndices.length} rows (range: rows ${Math.min(...selectedIndices) + 1} to ${Math.max(...selectedIndices) + 1})
+
+Sample from selected rows (${selectedSamples.length} rows):
+${JSON.stringify(selectedSamples, null, 2)}
+
+Sample from other rows (${unselectedSamples.length} rows):
+${JSON.stringify(unselectedSamples, null, 2)}`
+  : `Random sample of data (showing 5 of ${currentData.length} total rows):
+${JSON.stringify(sampleRows.map(row => {
+    const { _isSelected, _rowIndex, ...cleanRow } = row;
+    return cleanRow;
+  }), null, 2)}`}
 
 Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample.
 ${isVisualization ? 'Create a visualization based on the request. Return the plot as a base64 encoded PNG image.' : 'Process the data according to the request.'}
 
-Task: ${question}
-
-Generate a complete Python script that processes the entire dataset and returns the result in the correct JSON format.`;
+Task: ${question}`;
 
     const codeCompletion = await openai.chat.completions.create({
       messages: [

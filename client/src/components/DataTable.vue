@@ -248,6 +248,8 @@ export default {
       shiftPressed: false,
       expandedCodes: {},
       plotImages: {}, // Store base64 images for each plot
+      ctrlPressed: false,
+      selectedRows: new Set(), // Add this to track selected rows
     }
   },
   directives: {
@@ -371,6 +373,16 @@ export default {
       }
     },
 
+    getSelectedRowsData() {
+      const selectedRowsData = [];
+      this.selectedRows.forEach(rowIndex => {
+        if (this.tableData[rowIndex]) {
+          selectedRowsData.push(this.tableData[rowIndex]);
+        }
+      });
+      return selectedRowsData;
+    },
+
     async sendMessage() {
       if (!this.userMessage.trim() || !this.tableData.length) return;
 
@@ -379,7 +391,11 @@ export default {
       this.userMessage = '';
       this.loading = true;
       this.error = null;
-      const response = await this.executeAnalysis(question);
+
+      // Get selected rows data if any
+      const selectedRowsData = this.getSelectedRowsData();
+      
+      const response = await this.executeAnalysis(question, selectedRowsData);
 
       if (!response.data.error) {
         this.handleSuccessResponse(response);
@@ -406,10 +422,12 @@ export default {
       
     },
 
-    async executeAnalysis(question) {
+    async executeAnalysis(question, selectedRowsData = []) {
       return await axiosInstance.post('/api/analyze', {
         question: question,
-        data: this.tableData
+        data: this.tableData,
+        selectedRows: selectedRowsData,
+        selectedIndices: Array.from(this.selectedRows)
       });
     },
 
@@ -672,36 +690,92 @@ export default {
       if (e.key === 'Shift') {
         this.shiftPressed = true;
       }
+      if (e.key === 'Control' || e.key === 'Meta') { // Meta for Mac
+        this.ctrlPressed = true;
+      }
     },
 
     handleKeyUp(e) {
       if (e.key === 'Shift') {
         this.shiftPressed = false;
       }
+      if (e.key === 'Control' || e.key === 'Meta') {
+        this.ctrlPressed = false;
+      }
     },
 
     startSelection(rowIndex, colIndex, type = 'cell') {
       if (this.editingCell || this.editingHeader) return;
       
-      // Only allow selection from row numbers
-      if (type !== 'row') return;
-      
-      this.isSelecting = true;
-      this.selection.type = 'row';
-      this.selection.start = { row: rowIndex, col: -1 };
-      this.selection.end = { row: rowIndex, col: -1 };
-      
-      if (!this.shiftPressed) {
-        this.selection.selectedCells.clear();
+      if (type === 'row') {
+        // Handle row number column clicks
+        if (colIndex === -1) {
+          if (this.ctrlPressed) {
+            // Toggle the row selection
+            if (this.selectedRows.has(rowIndex)) {
+              // Unselect the row
+              this.selectedRows.delete(rowIndex);
+              // Remove all cells in the row from selection
+              for (let j = 0; j < this.headers.length; j++) {
+                this.selection.selectedCells.delete(`${rowIndex},${j}`);
+              }
+            } else {
+              // Select the row
+              this.selectedRows.add(rowIndex);
+              // Add all cells in the row to selection
+              for (let j = 0; j < this.headers.length; j++) {
+                this.selection.selectedCells.add(`${rowIndex},${j}`);
+              }
+            }
+          } else {
+            // Single click without Ctrl
+            if (this.selectedRows.has(rowIndex) && this.selectedRows.size === 1) {
+              // If clicking the only selected row, unselect it
+              this.selectedRows.delete(rowIndex);
+              this.selection.selectedCells.clear();
+            } else {
+              // Clear previous selection and select only this row
+              this.selectedRows.clear();
+              this.selection.selectedCells.clear();
+              this.selectedRows.add(rowIndex);
+              // Add all cells in the row to selection
+              for (let j = 0; j < this.headers.length; j++) {
+                this.selection.selectedCells.add(`${rowIndex},${j}`);
+              }
+            }
+          }
+        }
+        
+        // Continue with existing drag selection logic
+        this.isSelecting = true;
+        this.selection.type = 'row';
+        this.selection.start = { row: rowIndex, col: -1 };
+        this.selection.end = { row: rowIndex, col: -1 };
       }
-      this.updateSelection();
     },
 
     updateSelection(rowIndex) {
       if (!this.isSelecting || this.selection.type !== 'row') return;
       
-      this.selection.end = { row: rowIndex, col: -1 };
-      this.calculateSelectedCells();
+      // Handle drag selection
+      if (this.selection.start && this.selection.end) {
+        const startRow = Math.min(this.selection.start.row, rowIndex);
+        const endRow = Math.max(this.selection.start.row, rowIndex);
+        
+        if (!this.ctrlPressed) {
+          this.selectedRows.clear();
+          this.selection.selectedCells.clear();
+        }
+        
+        // Add all rows in the range to selection
+        for (let i = startRow; i <= endRow; i++) {
+          this.selectedRows.add(i);
+          // Add all cells in each selected row to selection
+          for (let j = 0; j < this.headers.length; j++) {
+            this.selection.selectedCells.add(`${i},${j}`);
+          }
+        }
+      }
     },
 
     stopSelection() {
@@ -751,13 +825,7 @@ export default {
     },
 
     isRowSelected(rowIndex) {
-      if (!this.isSelecting && this.selection.selectedCells.size === 0) {
-        return false;
-      }
-
-      const startRow = Math.min(this.selection.start.row, this.selection.end.row);
-      const endRow = Math.max(this.selection.start.row, this.selection.end.row);
-      return rowIndex >= startRow && rowIndex <= endRow;
+      return this.selectedRows.has(rowIndex);
     },
 
     isInSelectionRange(rowIndex) {
@@ -805,7 +873,7 @@ export default {
       if (modalPlot) {
         modalPlot.innerHTML = '';
       }
-    }
+    },
   }
 }
 </script>
