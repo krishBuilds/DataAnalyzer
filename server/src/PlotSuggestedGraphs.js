@@ -1,0 +1,322 @@
+const { OpenAI } = require('openai');
+const fs = require('fs').promises;
+const path = require('path');
+const { exec, spawn } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
+
+// Import the visualization prompt from app.js
+const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
+Your code must:
+1. Include all necessary imports (pandas, json, sys, plotly)
+2. Start directly with imports - no description text
+3. Create clear and informative visualizations
+4. Save plots as interactive HTML file and return plot_html and dont add any image related code
+5. Use plotly for visualization
+
+Example structure:
+import pandas as pd
+import json
+import sys
+import plotly.express as px
+import plotly.graph_objects as go
+import json
+
+def create_visualization(df):
+    try:
+        # Create plot using plotly, example plot below
+        # fig = px.scatter(df, x=df.columns[0], y=df.columns[1])  # Example plot
+        
+        # Update layout for better appearance
+        fig.update_layout(
+            template='plotly_white',
+            title_x=0.5,
+            margin=dict(t=50, l=50, r=50, b=50)
+        )
+        
+        # Save as HTML
+        plot_path = 'plot.html'
+        fig.write_html(plot_path, full_html=True, include_plotlyjs=True)
+        
+        # Read the HTML content
+        with open(plot_path, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        
+        return html_content
+            
+    except Exception as e:
+        raise Exception(f"Error creating visualization: {str(e)}")
+    finally:
+        # Cleanup
+        if 'fig' in locals():
+            fig.data = []
+            fig.layout = {}
+            del fig
+
+def process_data(data):
+    try:
+        df = pd.DataFrame(data)
+        
+        # Process the data to make it compatible here for creating the plot
+        
+        html_content = create_visualization(df)
+        
+        return {
+            'data': df.to_dict('records'),
+            'plot_html': html_content,  # Return full HTML content
+            'changed_rows': []
+        }
+    except Exception as e:
+        print(json.dumps({
+            'error': str(e),
+            'data': [],
+            'changed_rows': []
+        }))
+        sys.exit(1)
+
+if __name__ == "__main__":
+    try:
+        input_data = json.loads(sys.argv[1])
+        result = process_data(input_data)
+        print(json.dumps(result))
+    except Exception as e:
+        print(json.dumps({
+            'error': str(e),
+            'data': [],
+            'changed_rows': []
+        }))
+        sys.exit(1)`;
+
+// First, add the getRandomSampleRows helper function
+function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
+  if (!data || !data.length) return [];
+  
+  let selectedSamples = [];
+  let unselectedSamples = [];
+  
+  // Convert data to array if it's not already
+  const dataArray = Array.isArray(data) ? data : Object.values(data);
+  
+  if (selectedIndices.length > 0) {
+    // Get exactly 2 samples from selected rows (or all if less than 2)
+    const selectedData = selectedIndices.map(index => ({
+      ...dataArray[index],
+      _rowIndex: index,
+      _isSelected: true
+    }));
+    selectedSamples = selectedData
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 2);
+    
+    // Get exactly 3 samples from unselected rows
+    const unselectedData = dataArray
+      .filter((_, index) => !selectedIndices.includes(index))
+      .map((row, idx) => ({
+        ...row,
+        _rowIndex: idx,
+        _isSelected: false
+      }));
+    unselectedSamples = unselectedData
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 3);
+  } else {
+    // If no selection, get 5 samples from the full dataset
+    unselectedSamples = dataArray
+      .map((row, idx) => ({
+        ...row,
+        _rowIndex: idx,
+        _isSelected: false
+      }))
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 5);
+  }
+  
+  return [...selectedSamples, ...unselectedSamples];
+}
+
+class PlotSuggestor {
+  constructor(openai) {
+    this.openai = openai;
+  }
+
+  async suggestPlots(data, headers) {
+    // Get 2 random sample rows for suggestions
+    const sampleRows = getRandomSampleRows(data, [], 2);
+
+    // Format samples for the suggestion prompt
+    const formattedSamples = sampleRows.map((row, idx) => ({
+      row: idx + 1,
+      data: row
+    }));
+
+    // Create the suggestion prompt
+    const suggestionPrompt = `Given this table structure:
+Headers: ${JSON.stringify(headers)}
+Random sample of data (showing 2 of ${data.length} total rows):
+${JSON.stringify(formattedSamples, null, 2)}
+
+Note: Your code will receive the ENTIRE dataset (${data.length} rows) as input, not just this sample.
+
+Suggest 3 different meaningful visualizations that would provide insights about this data.
+For each visualization:
+1. Explain why it would be useful
+2. What insights it might reveal
+3. Which columns it would use
+
+Return the response in this format:
+1. [Plot Type]: [Brief Description]
+2. [Plot Type]: [Brief Description]
+...etc`;
+
+    try {
+      const completion = await this.openai.chat.completions.create({
+        messages: [
+          { role: "system", content: "You are a data visualization expert." },
+          { role: "user", content: suggestionPrompt }
+        ],
+        model: "gpt-4o-mini",
+      });
+
+      const suggestions = this.parseSuggestions(completion.choices[0].message.content);
+      return await this.generatePlots(suggestions, data);
+    } catch (error) {
+      throw new Error(`Failed to generate plot suggestions: ${error.message}`);
+    }
+  }
+
+  parseSuggestions(content) {
+    const suggestions = content.split('\n')
+      .filter(line => line.match(/^\d+\./))
+      .map(line => {
+        const [plotType, description] = line.substring(3).split(':');
+        return {
+          plotType: plotType.trim(),
+          description: description.trim()
+        };
+      });
+    return suggestions.slice(0, 3); // Ensure we only get 5 suggestions
+  }
+
+  async generatePlots(suggestions, data) {
+    const results = [];
+    const plotDir = path.join(__dirname, 'plots');
+
+    // // Ensure the plot directory exists
+    // if (!fs.existsSync(plotDir)) {
+    //   await fs.mkdir(plotDir);
+    // }
+
+    // Get 4 random rows for plotting
+    const plotSampleRows = getRandomSampleRows(data, [], 4);
+
+    for (const suggestion of suggestions) {
+      try {
+        const plotPrompt = `Create a ${suggestion.plotType} visualization for the data.
+The plot should be clear, informative, and properly labeled. The data should be correctly transformed for visual representation.
+The axis should not just dole out the numbers, but they should be appropriately scaled and maintain the aspect ratio for visual clarity.
+For the dapa plot the: ${suggestion.description}
+
+Use the following sample data (4 random rows):
+${JSON.stringify(plotSampleRows, null, 2)}`;
+
+        const completion = await this.openai.chat.completions.create({
+          messages: [
+            { role: "system", content: visualizationPrompt },
+            { role: "user", content: plotPrompt }
+          ],
+          model: "gpt-4o-mini",
+        });
+
+        const pythonCode = completion.choices[0].message.content.replace(/```python\n|```\n|```/g, '').trim();
+        const plot_html = await this.executePythonCode(pythonCode, data);
+
+        // Save the plot HTML to a local file
+        const plotFileName = `plot_${Date.now()}.html`;
+        const plotFilePath = path.join(plotDir, plotFileName);
+        await fs.writeFile(plotFilePath, plot_html, 'utf8');
+
+        results.push({
+          description: suggestion.description,
+          plot_html: plot_html,
+          code: pythonCode,
+          filePath: plotFilePath // Include the file path in the results
+        });
+      } catch (error) {
+        console.error(`Error generating plot for ${suggestion.plotType}:`, error);
+      }
+    }
+
+    return results;
+  }
+
+  async executePythonCode(pythonCode, data) {
+    const tempDir = path.join(__dirname, 'temp');
+    const scriptPath = path.join(tempDir, `script_${Date.now()}.py`);
+    const tempDataPath = path.join(tempDir, `data_${Date.now()}.json`);
+    let processedData = '';
+    let errorData = '';
+
+    try {
+      // Write the data to a temporary JSON file
+      await fs.writeFile(tempDataPath, JSON.stringify(data), 'utf8');
+
+      // Modify Python code to read from file
+      pythonCode = pythonCode.replace(
+        'input_data = json.loads(sys.argv[1])',
+        `with open("${tempDataPath.replace(/\\/g, '\\\\')}", 'r', encoding='utf-8') as f:
+            input_data = json.load(f)`
+      );
+
+      // Write the Python code to a temporary file
+      await fs.writeFile(scriptPath, pythonCode);
+
+      // Execute Python script with proper error handling
+      const pythonProcess = spawn('python', [scriptPath]);
+      
+      // Collect data from stdout and stderr
+      pythonProcess.stdout.on('data', (data) => {
+        processedData += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        errorData += data.toString();
+      });
+
+      // Wait for the process to complete
+      const exitCode = await new Promise((resolve) => {
+        pythonProcess.on('close', resolve);
+      });
+
+      if (exitCode !== 0 || errorData) {
+        throw new Error(errorData || 'Python execution failed');
+      }
+
+      try {
+        // Parse the output as JSON
+        const sanitizedData = processedData.replace(/: NaN/g, ': "NaN"');
+        const result = JSON.parse(sanitizedData);
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        return result.plot_html;
+      } catch (parseError) {
+        throw new Error(`Failed to parse Python output: ${parseError.message}`);
+      }
+    } catch (error) {
+      console.error('Error executing Python code:', error);
+      throw error;
+    } finally {
+      // Clean up temporary files
+      try {
+        await fs.unlink(scriptPath);
+        await fs.unlink(tempDataPath);
+      } catch (cleanupError) {
+        console.error('Error cleaning up files:', cleanupError);
+      }
+    }
+  }
+}
+
+module.exports = PlotSuggestor; 

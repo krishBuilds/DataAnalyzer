@@ -98,6 +98,10 @@
           <i class="fas fa-broom"></i>
           Clean Data
         </button>
+        <button @click="suggestPlots" :disabled="!tableData.length || loading" class="primary">
+          <i class="fas fa-chart-line"></i>
+          Suggest Plots
+        </button>
         <button @click="undo" :disabled="currentHistoryIndex <= 0">
           <i class="fas fa-undo"></i>
           Undo
@@ -188,7 +192,7 @@
             @keyup.enter.exact="sendMessage"
             placeholder="Ask about your data..."
             class="message-input"
-            rows="1"
+            rows="2"
           ></textarea>
           <button @click="sendMessage" :disabled="!userMessage.trim() || loading">
             Send
@@ -874,6 +878,34 @@ export default {
         modalPlot.innerHTML = '';
       }
     },
+
+    async suggestPlots() {
+      try {
+        this.loading = true;
+        const response = await axios.post('/api/suggest-plots', {
+          data: this.tableData,
+          selectedIndices: Array.from(this.selectedRows)
+        });
+
+        if (response.data.suggestions) {
+          response.data.suggestions.forEach(suggestion => {
+            this.chatMessages.push({
+              type: 'bot',
+              text: suggestion.description,
+              plot_html: suggestion.plot_html
+            });
+          });
+        }
+      } catch (error) {
+        this.chatMessages.push({
+          type: 'bot',
+          text: 'Error generating plot suggestions: ' + error.message,
+          error: error.response?.data?.error || error.message
+        });
+      } finally {
+        this.loading = false;
+      }
+    }
   }
 }
 </script>

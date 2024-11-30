@@ -65,3 +65,4 @@ client/.chrome-debug-profile
 
 #temp files
 server/src/temp
+server/src/plots

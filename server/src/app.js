@@ -12,6 +12,7 @@ const tempDir = path.join(__dirname, 'temp');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
+const PlotSuggestor = require('./PlotSuggestedGraphs');
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -21,6 +22,9 @@ if (!process.env.OPENAI_API_KEY) {
 
 const app = express();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Initialize the plot suggestor
+const plotSuggestor = new PlotSuggestor(openai);
 
 // Middleware for debugging requests
 app.use((req, res, next) => {
@@ -655,6 +659,28 @@ except Exception as e:
     } catch (cleanupError) {
       console.error('Error cleaning up files:', cleanupError);
     }
+  }
+});
+
+// Add new endpoint for plot suggestions
+app.post('/api/suggest-plots', async (req, res) => {
+  try {
+    const { data, selectedIndices } = req.body;
+    
+    if (!data || !data.length) {
+      return res.status(400).json({ error: 'No data available' });
+    }
+
+    const headers = Object.keys(data[0]);
+    const suggestions = await plotSuggestor.suggestPlots(data, headers, selectedIndices);
+
+    res.json({ suggestions });
+  } catch (error) {
+    console.error('Error suggesting plots:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate plot suggestions',
+      details: error.message 
+    });
   }
 });
 
