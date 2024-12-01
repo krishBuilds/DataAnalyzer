@@ -133,6 +133,32 @@
                :class="['message', message.type]">
             <div class="message-text">{{ message.text }}</div>
             
+            <!-- Add suggestions with checkboxes -->
+            <div v-if="message.suggestions" class="suggestions-container">
+              <div class="suggestions-header">Cleaning Suggestions:</div>
+              <ul class="suggestions-list">
+                <li v-for="(suggestion, idx) in message.suggestions" 
+                    :key="idx" 
+                    class="suggestion-item">
+                  <label class="suggestion-label">
+                    <input type="checkbox" 
+                           v-model="message.selectedSuggestions[idx]" 
+                           :checked="true">
+                    <span>{{ suggestion }}</span>
+                  </label>
+                </li>
+              </ul>
+              <!-- Add clean button -->
+              <button 
+                v-if="message.suggestions.length" 
+                @click="executeSelectedCleanings(message, index)"
+                class="clean-selected-btn"
+                :disabled="loading">
+                <i class="fas fa-broom"></i>
+                Clean Selected
+              </button>
+            </div>
+            
             <!-- Plot display -->
             <div v-if="message.plot_html" class="plot-container">
               <div class="plot-preview"
@@ -437,26 +463,28 @@ export default {
 
     async handleSuccessResponse(response) {
       try {
-        // Handle data updates first (restore previous functionality)
+        // Handle data updates first
         if (response.data.data && response.data.data.length > 0) {
-          // Add current state to history before making changes
           this.addToHistory({
             data: this.tableData,
             headers: this.headers
           });
           
-          // Update the state after adding to history
           this.tableData = response.data.data;
           this.headers = Object.keys(response.data.data[0] || {});
           this.changedRows = response.data.changedRows || [];
         }
 
-        // Create bot message
+        // Create bot message with suggestions
         const botMessage = {
           type: 'bot',
-          text: response.data.analysis,
-          code: response.data.code
+          text: response.data.analysis
         };
+
+        // Add suggestions if present
+        if (response.data.suggestions) {
+          botMessage.suggestions = response.data.suggestions;
+        }
 
         // Add plot HTML if present
         if (response.data.plot_html) {
@@ -545,18 +573,88 @@ export default {
 
     async cleanData() {
       this.loading = true;
-      const cleaningMessage = "Clean this dataset by: 1. Remove unnecessary columns 2. Rename headers to be more readable 3. Format data consistently";
-      
-      // Add user message to chat
-      this.chatMessages.push({ type: 'user', text: 'Clean the data' });
+      const cleaningMessage = "Analyze this dataset and suggest cleaning steps needed";
       
       try {
-        const response = await this.executeAnalysis(cleaningMessage);
-        this.handleSuccessResponse(response);
+        const response = await axios.post('/api/clean/suggest', {
+          data: this.tableData,
+          question: cleaningMessage
+        });
+        
+        // Add suggestions to chat with selection state
+        if (response.data.suggestions && Array.isArray(response.data.suggestions)) {
+          this.chatMessages.push({
+            type: 'bot',
+            text: 'Here are the suggested cleaning steps:',
+            suggestions: response.data.suggestions,
+            selectedSuggestions: response.data.suggestions.map(() => true), // All selected by default
+            context: cleaningMessage // Store original context
+          });
+        }
       } catch (error) {
         this.displayError(error);
       } finally {
         this.loading = false;
+      }
+    },
+
+    async executeSelectedCleanings(message) {
+      if (!message.suggestions || !message.selectedSuggestions) return;
+      
+      this.loading = true;
+      
+      // Filter selected suggestions
+      const selectedSuggestions = message.suggestions.filter((_, idx) => 
+        message.selectedSuggestions[idx]
+      );
+
+      try {
+        const response = await axios.post('/api/clean/execute', {
+          data: this.tableData,
+          suggestions: selectedSuggestions,
+          context: message.context
+        });
+
+        // Add to history before updating data
+        this.addToHistory({
+          data: this.tableData,
+          headers: this.headers
+        });
+
+        // Update table data and changed rows
+        if (response.data.data) {
+          this.tableData = response.data.data;
+          this.headers = Object.keys(response.data.data[0] || {});
+          this.changedRows = response.data.changedRows || [];
+        }
+
+        // Add success message to chat
+        this.chatMessages.push({
+          type: 'bot',
+          text: response.data.analysis,
+          code: response.data.code
+        });
+
+      } catch (error) {
+        // Enhanced error handling
+        const errorResponse = error.response?.data;
+        this.chatMessages.push({
+          type: 'bot',
+          text: 'Error while cleaning data:',
+          error: {
+            message: errorResponse?.error?.message || 'Failed to execute cleaning operations',
+            pythonError: errorResponse?.error?.pythonError,
+            code: errorResponse?.error?.code
+          }
+        });
+      } finally {
+        this.loading = false;
+        
+        // Scroll to bottom of chat
+        await this.$nextTick();
+        if (this.$refs.chatMessages) {
+          this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        }
       }
     },
 
@@ -1843,5 +1941,58 @@ export default {
 .plot-interactive :deep(.js-plotly-plot) {
   width: 100% !important;
   height: 100% !important;
+}
+
+.suggestions-container {
+  margin-top: 8px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.suggestions-list {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+}
+
+.suggestion-item {
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+  color: #2c3e50;
+  font-size: 0.95em;
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.suggestion-label input[type="checkbox"] {
+  margin-top: 4px;
+}
+
+.clean-selected-btn {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clean-selected-btn:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
 }
 </style>

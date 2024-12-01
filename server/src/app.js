@@ -13,6 +13,7 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 const PlotSuggestor = require('./PlotSuggestedGraphs');
+const DataCleaningRequest = require('./DataCleaningRequest');
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -296,29 +297,6 @@ function handleErrorResponse(res, error, pythonCode, processedData = '', errorDa
   });
 }
 
-// Add this helper function at the top level
-async function cleanupFiles(...filePaths) {
-  const cleanupPromises = filePaths
-    .filter(Boolean) // Filter out null/undefined paths
-    .map(filePath => 
-      fsPromises.unlink(filePath)
-        .catch(err => {
-          debug('Error cleaning up file:', {
-            path: filePath,
-            error: err.message
-          });
-          return err;
-        })
-    );
-
-  try {
-    await Promise.all(cleanupPromises);
-    debug('All files cleaned up successfully');
-  } catch (error) {
-    debug('Cleanup error:', error);
-  }
-}
-
 // Modified analyze endpoint
 app.post('/api/analyze', async (req, res, next) => {
   let tempDataPath = null;
@@ -327,6 +305,7 @@ app.post('/api/analyze', async (req, res, next) => {
   
   try {
     const { question, data, selectedRows, selectedIndices } = req.body;
+    
     const isVisualization = isVisualizationRequest(question);
     const systemPrompt = isVisualization ? visualizationPrompt : dataProcessingPrompt;
     
@@ -483,11 +462,11 @@ Task: ${question}`;
       });
 
       // Clean up both script and data files
-      await cleanupFiles(
+      /*await cleanupFiles(
         tempFilePath,
         tempDataPath,
         path.join(tempDir, 'temp_data.json')
-      );
+      );*/
 
       if (!responseHandled) {
         responseHandled = true;
@@ -584,11 +563,11 @@ Task: ${question}`;
       }
       
       // Clean up all temporary files
-      await cleanupFiles(
+      /*await cleanupFiles(
         tempFilePath,
         tempDataPath,
         path.join(tempDir, 'temp_data.json')
-      );
+      );*/
       
       debug('Error in analyze endpoint:', error);
       return handleErrorResponse(res, error, '');
@@ -655,7 +634,7 @@ except Exception as e:
   } finally {
     // Clean up temporary files
     try {
-      await cleanupFiles(tempHtmlPath, tempImagePath, scriptPath);
+      //await cleanupFiles(tempHtmlPath, tempImagePath, scriptPath);
     } catch (cleanupError) {
       console.error('Error cleaning up files:', cleanupError);
     }
@@ -692,3 +671,46 @@ app.use((req, res, next) => {
 app.listen(config.port, () => {
   console.log(`Server running on port ${config.port}`);
 }); 
+
+// Remove cleaning from analyze endpoint and add new endpoints
+app.post('/api/clean/suggest', async (req, res) => {
+  try {
+    const { question, data } = req.body;
+    const cleaningHandler = new DataCleaningRequest(openai);
+    const result = await cleaningHandler.process(question, data);
+    // Store the handler instance in app.locals for later use
+    app.locals.cleaningHandler = cleaningHandler;
+    res.json(result);
+  } catch (error) {
+    debug('Error in cleaning suggestions:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate cleaning suggestions',
+      details: error.message 
+    });
+  }
+});
+
+app.post('/api/clean/execute', async (req, res) => {
+  try {
+    const { data, suggestions } = req.body;
+    const cleaningHandler = app.locals.cleaningHandler || new DataCleaningRequest(openai);
+    
+    const result = await cleaningHandler.executeCleaning(data, suggestions);
+    
+    res.json({
+      data: result.data,
+      changedRows: result.changedRows,
+      analysis: `Applied ${suggestions.length} cleaning operations`,
+      code: result.pythonCode
+    });
+  } catch (error) {
+    debug('Error executing cleaning:', error);
+    res.status(500).json({ 
+      error: {
+        message: error.message || 'Failed to execute cleaning operations',
+        pythonError: error.pythonError,
+        code: error.code
+      }
+    });
+  }
+});
