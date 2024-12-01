@@ -1,11 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import DataTable from '../components/DataTable/DataTable.vue'
 
 const routes = [
   {
     path: '/',
     name: 'home',
-    component: DataTable
   }
 ]
 

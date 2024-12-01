@@ -9,9 +9,11 @@
       "webRoot": "${workspaceFolder}",
       "sourceMaps": true,
       "sourceMapPathOverrides": {
-        "webpack:///./src/*": "${webRoot}/src/*",
-        "webpack:///src/*": "${webRoot}/src/*"
+        "webpack:///src/*": "${webRoot}/src/*",
+        "webpack:///./*": "${webRoot}/*",
+        "webpack:///*": "${webRoot}/*"
       },
+      "userDataDir": false,
       "runtimeArgs": [
         "--new-window",
         "--remote-debugging-port=9222",

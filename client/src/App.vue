@@ -7,7 +7,7 @@
 </template>
 
 <script>
-import DataTable from './components/DataTable.vue'
+import DataTable from './components/ChatClient.vue'
 
 export default {
   name: 'App',

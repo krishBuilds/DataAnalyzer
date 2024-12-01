@@ -228,7 +228,7 @@ if __name__ == "__main__":
         sys.exit(1)`
 
 // Modify the getRandomSampleRows function to handle mixed sampling
-function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
+function getRandomSampleRows(data, selectedIndices = [], totalSamples = 15) {
   if (!data || !data.length) return [];
   
   let selectedSamples = [];
@@ -238,7 +238,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
   const dataArray = Array.isArray(data) ? data : Object.values(data);
   
   if (selectedIndices.length > 0) {
-    // Get exactly 2 samples from selected rows (or all if less than 2)
+    // Get up to 7 samples from selected rows (or all if less)
     const selectedData = selectedIndices.map(index => ({
       ...dataArray[index],
       _rowIndex: index,
@@ -246,9 +246,10 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
     }));
     selectedSamples = selectedData
       .sort(() => 0.5 - Math.random())
-      .slice(0, 2);
+      .slice(0, 7);
     
-    // Get exactly 3 samples from unselected rows
+    // Get remaining samples from unselected rows to reach total of 15
+    const remainingSamples = Math.max(15 - selectedSamples.length, 8);
     const unselectedData = dataArray
       .filter((_, index) => !selectedIndices.includes(index))
       .map((row, idx) => ({
@@ -258,9 +259,9 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
       }));
     unselectedSamples = unselectedData
       .sort(() => 0.5 - Math.random())
-      .slice(0, 3);
+      .slice(0, remainingSamples);
   } else {
-    // If no selection, get 5 samples from the full dataset
+    // If no selection, get 15 samples (or all rows if less) from the full dataset
     unselectedSamples = dataArray
       .map((row, idx) => ({
         ...row,
@@ -268,7 +269,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
         _isSelected: false
       }))
       .sort(() => 0.5 - Math.random())
-      .slice(0, 5);
+      .slice(0, Math.min(15, dataArray.length));
   }
   
   return [...selectedSamples, ...unselectedSamples];
@@ -370,7 +371,7 @@ Task: ${question}`;
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      model: "gpt-3.5-turbo",
+      model: "gpt-4o-mini",
     });
 
     // Get and save Python code
@@ -693,6 +694,12 @@ app.post('/api/clean/suggest', async (req, res) => {
 app.post('/api/clean/execute', async (req, res) => {
   try {
     const { data, suggestions } = req.body;
+    
+    // Validate suggestions
+    if (!Array.isArray(suggestions)) {
+      throw new Error('Suggestions must be an array');
+    }
+
     const cleaningHandler = app.locals.cleaningHandler || new DataCleaningRequest(openai);
     
     const result = await cleaningHandler.executeCleaning(data, suggestions);

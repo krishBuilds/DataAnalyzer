@@ -90,6 +90,7 @@ class DataCleaningRequest {
   }
 
   async process(question, data, selectedIndices) {
+    let pythonCode = '';
     try {
       const systemPrompt = `You are a data cleaning assistant. Analyze the dataset and suggest improvements to make it clean and ready for analysis. Focus on data consistency, empty values, formatting, and overall quality, and misrepresentation that might have crept in the data.
 
@@ -140,13 +141,21 @@ Analyze this data and list specific cleaning steps needed. Return only the JSON 
       };
 
     } catch (error) {
-      debug('Error in data cleaning analysis:', error);
-      throw error;
+      throw {
+        error: error.message,
+        code: pythonCode,
+        pythonError: error.pythonError
+      };
     }
   }
 
   async executeCleaning(data, suggestions) {
     try {
+        // Initialize chat history if it doesn't exist
+        if (!this.chatHistory) {
+            this.chatHistory = [];
+        }
+
         const systemPrompt = `You are a Python programming assistant that generates complete, executable scripts.
 Your code must:
 1. Include necessary imports (pandas, json, sys)
@@ -187,16 +196,23 @@ if __name__ == "__main__":
         }
         print(json.dumps(error_result))`;
 
-        // Add the execution request to chat history
+        // Add the execution request to chat history with proper structure
         this.chatHistory.push(
-            { role: "user", content: `Generate Python code to implement these cleaning steps:
-${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-
-The code should follow the template structure and return the cleaned data in the specified format.` }
+            { 
+                role: "user", 
+                content: `Generate Python code to implement these cleaning steps:\n${
+                    Array.isArray(suggestions) 
+                        ? suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')
+                        : suggestions
+                }\n\nThe code should follow the template structure and return the cleaned data in the specified format.`
+            }
         );
 
         const completion = await this.openai.chat.completions.create({
-            messages: [...this.chatHistory, { role: "system", content: systemPrompt }],
+            messages: [
+                ...this.chatHistory,
+                { role: "system", content: systemPrompt }
+            ],
             model: "gpt-4o-mini",
             temperature: 0.2
         });
@@ -292,7 +308,8 @@ The code should follow the template structure and return the cleaned data in the
     } catch (error) {
         throw {
             error: error.message,
-            code: pythonCode
+            pythonError: error.pythonError,
+            code: error.code
         };
     }
 }
