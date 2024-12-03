@@ -9,9 +9,9 @@
       "webRoot": "${workspaceFolder}",
       "sourceMaps": true,
       "sourceMapPathOverrides": {
-        "webpack:///src/*": "${webRoot}/src/*",
-        "webpack:///./*": "${webRoot}/*",
-        "webpack:///*": "${webRoot}/*"
+        "webpack:///./src/*": "${webRoot}/src/*",
+        "webpack:///src/*": "${webRoot}/src/*"
+
       },
       "userDataDir": false,
       "runtimeArgs": [

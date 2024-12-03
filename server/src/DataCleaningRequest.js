@@ -92,7 +92,7 @@ class DataCleaningRequest {
   async process(question, data, selectedIndices) {
     let pythonCode = '';
     try {
-      const systemPrompt = `You are a data cleaning assistant. Analyze the dataset and suggest improvements to make it clean and ready for analysis. Focus on data consistency, empty values, formatting, and overall quality, and misrepresentation that might have crept in the data.
+      const systemPrompt = `You are a data cleaning assistant. Analyze the dataset and suggest improvements to make it clean and ready for analysis. Focus on data consistency, empty values, formatting, and overall quality, and misrepresentation that might have crept in the data. Also consider renaming the headers if in bad shape. Focus is to make the data cleaner and standardized (add a new column), consider adding a new column in case there are lot of changes in a column. Make the table data clean.
 
 Return your suggestions in this exact format without any markdown:
 {
@@ -135,7 +135,6 @@ Analyze this data and list specific cleaning steps needed. Return only the JSON 
 
       return {
         data: data,
-        changedRows: 0,
         analysis: "Here are the suggested cleaning steps:",
         suggestions: suggestions.suggestions
       };
@@ -177,7 +176,6 @@ def process_data(data):
     
     return {
         'data': df.to_dict('records'),
-        'changed_rows': []  # Indices of modified rows
     }
 
 if __name__ == "__main__":
@@ -191,8 +189,7 @@ if __name__ == "__main__":
     except Exception as e:
         error_result = {
             'error': str(e),
-            'data': [],
-            'changed_rows': []
+            'data': []
         }
         print(json.dumps(error_result))`;
 
@@ -257,7 +254,7 @@ if __name__ == "__main__":
 
             pythonProcess.stdout.on('data', (data) => {
                 processedData += data.toString('utf8');
-                debug('Python stdout:', data.toString('utf8'));
+                //debug('Python stdout:', data.toString('utf8'));
             });
 
             pythonProcess.stderr.on('data', (data) => {
@@ -282,7 +279,7 @@ if __name__ == "__main__":
                         result = JSON.parse(sanitizedData);
                     } catch (parseError) {
                         debug('Error parsing Python output:', parseError);
-                        debug('Raw output:', sanitizedData);
+                        //debug('Raw output:', sanitizedData);
                         throw new Error(`Failed to parse Python output: ${parseError.message}`);
                     }
 
@@ -292,7 +289,6 @@ if __name__ == "__main__":
 
                     resolve({
                         data: result.data || data,
-                        changedRows: result.changed_rows || [],
                         pythonCode,
                         suggestions
                     });

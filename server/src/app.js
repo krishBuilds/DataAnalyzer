@@ -133,8 +133,7 @@ def process_data(data):
     # Process the entire DataFrame, not just the sample
     
     return {
-        'data': df.to_dict('records'),
-        'changed_rows': []  # Indices of modified rows
+        'data': df.to_dict('records')
     }
 
 if __name__ == "__main__":
@@ -146,7 +145,6 @@ if __name__ == "__main__":
         print(json.dumps({
             'error': str(e),
             'data': [],
-            'changed_rows': []
         }))`;
 
 const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
@@ -204,13 +202,11 @@ def process_data(data):
         return {
             'data': df.to_dict('records'),
             'plot_html': html_content,  # Return full HTML content
-            'changed_rows': []
         }
     except Exception as e:
         print(json.dumps({
             'error': str(e),
             'data': [],
-            'changed_rows': []
         }))
         sys.exit(1)
 
@@ -223,7 +219,6 @@ if __name__ == "__main__":
         print(json.dumps({
             'error': str(e),
             'data': [],
-            'changed_rows': []
         }))
         sys.exit(1)`
 
@@ -488,7 +483,6 @@ Task: ${question}`;
             if (processedData.trim()) {
               return res.json({ 
                 data: currentData,
-                changedRows: [],
                 analysis: processedData.trim(),
                 code: pythonCode,
               });
@@ -501,7 +495,6 @@ Task: ${question}`;
             debug('Visualization generated');
             return res.json({ 
               data: currentData,
-              changedRows: [],
               plot_html: result.plot_html,  // This will now contain the HTML content
               analysis: 'Generated visualization',
               code: pythonCode,
@@ -515,11 +508,10 @@ Task: ${question}`;
             
             return res.json({ 
               data: result.data,
-              changedRows: result.changed_rows || [],
               plot_html: result.plot_html,
               analysis: result.plot_html 
                 ? 'Generated visualization' 
-                : `Operation completed. ${result.changed_rows?.length || 0} rows were modified.`,
+                : `Operation completed.`,
               code: pythonCode,
             });
           } else if (result.error) {
@@ -527,7 +519,6 @@ Task: ${question}`;
           } else {
             return res.json({
               data: currentData,
-              changedRows: [],
               analysis: result.message || processedData.trim() || 'Operation completed',
               code: pythonCode,
             });
@@ -695,18 +686,16 @@ app.post('/api/clean/execute', async (req, res) => {
   try {
     const { data, suggestions } = req.body;
     
-    // Validate suggestions
     if (!Array.isArray(suggestions)) {
       throw new Error('Suggestions must be an array');
     }
 
     const cleaningHandler = app.locals.cleaningHandler || new DataCleaningRequest(openai);
-    
     const result = await cleaningHandler.executeCleaning(data, suggestions);
     
     res.json({
       data: result.data,
-      changedRows: result.changedRows,
+      headers: Object.keys(result.data[0] || {}),
       analysis: `Applied ${suggestions.length} cleaning operations`,
       code: result.pythonCode
     });
@@ -714,7 +703,7 @@ app.post('/api/clean/execute', async (req, res) => {
     debug('Error executing cleaning:', error);
     res.status(500).json({ 
       error: {
-        message: error.message || 'Failed to execute cleaning operations',
+        message: error.error,
         pythonError: error.pythonError,
         code: error.code
       }

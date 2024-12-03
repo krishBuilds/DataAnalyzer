@@ -50,18 +50,15 @@
       </div>
 
       <div class="grid-wrapper">
-        <revo-grid
+        <hot-table
+          ref="hotTable"
+          :settings="hotSettings"
+          @afterChange="handleAfterChange"
+          @afterSelection="handleAfterSelection"
+          @afterColumnResize="handleColumnResize"
           class="grid-component"
-          :source="gridOperations.getData()"
-          :columns="gridOperations.getColumns()"
-          theme="material"
-          :resize="true"
-          :range="true"
-          @before-edit="handleBeforeEdit"
-          @after-edit="handleAfterEdit"
-          @before-range="handleBeforeRange"
-          @after-range="handleAfterRange"
-        ></revo-grid>
+          v-if="hotSettings.data.length"
+        />
       </div>
     </div>
 
@@ -166,16 +163,19 @@
             </div>
           </div>
         </div>
-        <div class="chat-input">
-          <textarea 
-            v-model="userMessage" 
-            @keyup.enter.exact="sendMessage"
-            placeholder="Ask about your data..."
-            class="message-input"
-            rows="2"
+        <div class="chat-input-container">
+          <textarea
+            v-model="userMessage"
+            @keyup.enter.exact.prevent="sendMessage"
+            placeholder="Ask a question about your data..."
+            :disabled="loading || !gridOperations.getData().length"
           ></textarea>
-          <button @click="sendMessage" :disabled="!userMessage.trim() || loading">
-            Send
+          <button 
+            @click="sendMessage" 
+            :disabled="loading || !userMessage.trim() || !gridOperations.getData().length"
+            class="send-button"
+          >
+            <i class="fas fa-paper-plane"></i>
           </button>
         </div>
       </div>
@@ -191,64 +191,112 @@
 </template>
 
 <script>
-import { defineCustomElements } from '@revolist/revogrid/loader';
-//import '@revolist/revogrid/dist/css/revogrid.css';
+import { HotTable } from '@handsontable/vue3';
+import { registerAllModules } from 'handsontable/registry';
+import 'handsontable/dist/handsontable.full.min.css';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { nextTick } from 'vue';
-import { RevoGridOperations } from '../operations/RevoGridOperations.js';
+import { HandsontableOperations } from '../operations/HandsontableOperations';
 
-// Initialize RevoGrid web components
-defineCustomElements();
-
-const axiosInstance = axios.create({
-  baseURL: 'http://localhost:3000',
-  timeout: 300000, 
-  maxContentLength: 100 * 1024 * 1024,
-});
+// Register Handsontable modules
+registerAllModules();
 
 export default {
   name: 'DataTable',
-  components: {},
+  components: {
+    HotTable
+  },
   data() {
     return {
-      gridOperations: null,
+      gridOperations: new HandsontableOperations(),
+      hotSettings: {
+        data: [],
+        colHeaders: true,
+        rowHeaders: true,
+        licenseKey: 'non-commercial-and-evaluation',
+        height: '100%',
+        width: '100%',
+        stretchH: 'all',
+        manualColumnResize: true,
+        manualRowResize: true,
+        contextMenu: ['row_above', 'row_below', 'remove_row', 'undo', 'redo'],
+        multiSelect: true,
+        fillHandle: {
+          direction: 'vertical',
+          autoInsertRow: true
+        },
+        selectionMode: 'multiple',
+        outsideClickDeselects: false,
+        cells() {
+          return {
+            className: 'htMiddle'
+          };
+        },
+        renderAllRows: false,
+        viewportRowRenderingOffset: 70,
+        viewportColumnRenderingOffset: 30,
+        batch: true,
+        columnSorting: {
+          sortEmptyCells: true,
+          initialConfig: {
+            column: 0,
+            sortOrder: 'asc'
+          }
+        }
+      },
+      chatMessages: [],
+      userMessage: '',
       loading: false,
       error: null,
-      userMessage: '',
-      chatMessages: [
-        { type: 'bot', text: 'Hello! Upload a file and I can help you analyze it.' }
-      ],
+      tableData: [],
+      headers: [],
       selectedPlotHtml: null,
       isRetrying: false,
       expandedCodes: {},
-      shiftPressed: false,
-      ctrlPressed: false,
-      selection: {
-        type: null,
-        start: null,
-        end: null,
-        selectedCells: new Set()
-      },
-      history: [],
-      currentHistoryIndex: -1,
-      selectedRows: new Set(),
-      isSelecting: false,
-      editingCell: null,
-      editingHeader: null,
-      tempValue: null
     }
   },
   created() {
-    this.gridOperations = new RevoGridOperations();
+    this.hotSettings = {
+      data: [],
+      colHeaders: true,
+      rowHeaders: true,
+      licenseKey: 'non-commercial-and-evaluation',
+      height: '100%',
+      width: '100%',
+      stretchH: 'all',
+      manualColumnResize: true,
+      manualRowResize: true,
+      contextMenu: ['row_above', 'row_below', 'remove_row', 'undo', 'redo'],
+      multiSelect: true,
+      fillHandle: {
+        direction: 'vertical',
+        autoInsertRow: true
+      },
+      selectionMode: 'multiple',
+      outsideClickDeselects: false,
+      cells() {
+        return {
+          className: 'htMiddle'
+        };
+      },
+      renderAllRows: false,
+      viewportRowRenderingOffset: 70,
+      viewportColumnRenderingOffset: 30,
+      batch: true,
+      columnSorting: {
+        sortEmptyCells: true,
+        initialConfig: {
+          column: 0,
+          sortOrder: 'asc'
+        }
+      }
+    };
+    
+    this.gridOperations.updateData([{empty: ''}]);
+    this.hotSettings.columns = this.gridOperations.getColumns();
   },
   computed: {
-    headers() {
-      return this.gridOperations?.getHeaders() || [];
-    },
-    tableData() {
-      return this.gridOperations?.getData() || [];
-    },
     changedRows() {
       return this.gridOperations?.getChangedRows() || [];
     },
@@ -268,32 +316,41 @@ export default {
     }
   },
   mounted() {
-    // Add keyboard event listeners
-    window.addEventListener('keydown', this.handleKeyDown);
-    window.addEventListener('keyup', this.handleKeyUp);
+    console.log('Component mounted');
+    window.addEventListener('resize', this.onResize);
+    this.$nextTick(() => {
+      console.log('Hot table instance:', this.$refs.hotTable?.hotInstance);
+      this.onResize();
+    });
   },
   beforeUnmount() {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
   },
   methods: {
-    handleBeforeEdit() {
-      // Optional validation before edit
-      return true;
+    onResize() {
+      console.log('Resizing table');
+      if (this.$refs.hotTable?.hotInstance) {
+        this.$refs.hotTable.hotInstance.render();
+      }
     },
 
-    handleAfterEdit({ detail }) {
-      const { row, prop, val } = detail;
-      this.gridOperations.handleCellUpdate(row.__id, prop, val);
+    handleAfterChange(changes, source) {
+      if (!changes || source === 'loadData') return;
+      
+      changes.forEach(([row, prop, oldValue, newValue]) => {
+        if (oldValue !== newValue) {
+          this.gridOperations.handleCellUpdate(row, prop, newValue);
+        }
+      });
     },
 
-    handleBeforeRange() {
-      // Optional validation before range selection
-      return true;
-    },
-
-    handleAfterRange({ detail }) {
-      const selectedRows = detail.map(cell => cell.y);
+    handleAfterSelection(row, col, row2, col2) {
+      console.log('Selection changed:', { row, col, row2, col2 });
+      const selectedRows = [];
+      for (let i = Math.min(row, row2); i <= Math.max(row, row2); i++) {
+        selectedRows.push(i);
+      }
       this.gridOperations.selectRows(selectedRows);
     },
 
@@ -306,8 +363,30 @@ export default {
 
       try {
         const data = await this.readFile(file);
+        if (!data || !data.length) {
+          throw new Error('No data found in file');
+        }
+
+        // Update grid operations
         this.gridOperations.updateData(data);
-        
+
+        // Update Handsontable settings
+        this.hotSettings = {
+          ...this.hotSettings,
+          data: this.gridOperations.getData(),
+          colHeaders: this.gridOperations.getHeaders(),
+          columns: this.gridOperations.getColumns(),
+          minSpareRows: 1,
+          minSpareCols: 1
+        };
+
+        // Force table refresh
+        await this.$nextTick();
+        if (this.$refs.hotTable?.hotInstance) {
+          this.$refs.hotTable.hotInstance.loadData(this.hotSettings.data);
+          this.$refs.hotTable.hotInstance.render();
+        }
+
         await axios.post('/api/upload', { data });
         
         this.chatMessages.push({
@@ -315,7 +394,7 @@ export default {
           text: 'Data loaded successfully. What would you like to do with it?'
         });
       } catch (error) {
-        this.error = error.message;
+        this.handleError(error);
       } finally {
         this.loading = false;
       }
@@ -329,8 +408,23 @@ export default {
           try {
             let data;
             if (file.name.endsWith('.csv')) {
-              data = this.parseCSV(e.target.result);
+              // Parse CSV
+              const text = e.target.result;
+              const rows = text.split('\n');
+              const headers = rows[0].split(',').map(h => h.trim());
+              
+              data = rows.slice(1)
+                .filter(row => row.trim())
+                .map(row => {
+                  const values = row.split(',');
+                  const rowData = {};
+                  headers.forEach((header, index) => {
+                    rowData[header] = values[index]?.trim() || '';
+                  });
+                  return rowData;
+                });
             } else {
+              // Parse Excel
               const workbook = XLSX.read(e.target.result, { type: 'binary' });
               data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
             }
@@ -339,25 +433,14 @@ export default {
             reject(error);
           }
         };
-
+        
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        
         if (file.name.endsWith('.csv')) {
           reader.readAsText(file);
         } else {
           reader.readAsBinaryString(file);
         }
-      });
-    },
-
-    parseCSV(content) {
-      // Basic CSV parsing
-      const lines = content.split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
-      return lines.slice(1).map(line => {
-        const values = line.split(',');
-        return headers.reduce((obj, header, index) => {
-          obj[header] = values[index]?.trim();
-          return obj;
-        }, {});
       });
     },
 
@@ -399,7 +482,7 @@ export default {
     },
 
     async sendMessage() {
-      if (!this.userMessage.trim() || !this.tableData.length) return;
+      if (!this.userMessage.trim() || !this.gridOperations.getData().length) return;
 
       const question = this.userMessage;
       this.chatMessages.push({ type: 'user', text: question });
@@ -407,62 +490,40 @@ export default {
       this.loading = true;
       this.error = null;
 
-      // Get selected rows data if any
-      const selectedRowsData = this.getSelectedRowsData();
-      
-      const response = await this.executeAnalysis(question, selectedRowsData);
+      try {
+        const selectedRowsData = this.getSelectedRowsData();
+        const response = await axios.post('/api/analyze', {
+          question,
+          data: this.gridOperations.getData(),
+          selectedRows: selectedRowsData,
+          selectedIndices: this.gridOperations.getSelectedRows()
+        });
 
-      if (!response.data.error) {
-        this.handleSuccessResponse(response);
-      } else {
-        // Display the original error first
-        this.displayError(response);
-
-        // Try once with modified prompt if it's a Python error
-        if (!this.isRetrying && response?.data?.error?.message) {
-          this.isRetrying = true;
-          
-            const modifiedQuestion = `${question} Please keep in mind the following error : "${response.data.error.message}"`;
-            const retryResponse = await this.executeAnalysis(modifiedQuestion);
-            if (!retryResponse.data.error) {
-              this.handleSuccessResponse(retryResponse);
-            } else {
-              // Display the original error first
-              this.displayError(retryResponse);
-            }
-        }
+        await this.handleSuccessResponse(response);
+      } catch (error) {
+        this.handleError(error);
+      } finally {
+        this.loading = false;
       }
-      this.loading = false;
-      this.isRetrying = false;
-      
-    },
-
-    async executeAnalysis(question, selectedRowsData = []) {
-      return await axiosInstance.post('/api/analyze', {
-        question: question,
-        data: this.tableData,
-        selectedRows: selectedRowsData,
-        selectedIndices: Array.from(this.gridOperations?.getSelectedRows() || [])
-      });
     },
 
     async handleSuccessResponse(response) {
       try {
-        // Handle data updates first
-        if (response.data.data && response.data.data.length > 0) {
+        if (response.data.data) {
           this.addToHistory({
             data: this.gridOperations.getData(),
             headers: this.gridOperations.getHeaders()
           });
           
-          // Update data through gridOperations
+          // Update data through gridOperations with changedRows tracking
           const updatedData = this.gridOperations.updateFromServerResponse(response.data);
-          this.tableData = updatedData.data;
-          this.headers = updatedData.headers;
+          await this.updateTableData(updatedData.data);
+          
+          // Track changed rows
           this.changedRows = updatedData.changedRows || [];
         }
 
-        // Create bot message
+        // Create bot message with all possible properties
         const botMessage = {
           type: 'bot',
           text: response.data.analysis || 'Analysis completed'
@@ -482,9 +543,9 @@ export default {
         if (response.data.suggestions) {
           botMessage.suggestions = response.data.suggestions;
           botMessage.selectedSuggestions = response.data.suggestions.map(() => true);
+          botMessage.context = response.data.context; // Store original context
         }
 
-        // Add message to chat
         this.chatMessages.push(botMessage);
         
         // Update chat scroll position
@@ -498,21 +559,21 @@ export default {
       }
     },
 
-    displayError( response) {
-      //let errorMessage = 'An error occurred';
-      
+    displayError(response) {
       this.chatMessages.push({ 
         type: 'bot', 
         text: 'An error occurred while processing your request:',
         error: {
           message: response?.data?.error?.message,
-          details: response?.data?.message
-        },
-        code: response?.data?.error?.code
+          details: response?.data?.error?.details,
+          code: response?.data?.error?.code
+        }
       });
 
       this.$nextTick(() => {
-        this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        if (this.$refs.chatMessages) {
+          this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        }
       });
     },
 
@@ -529,20 +590,14 @@ export default {
     },
     
     addToHistory(state) {
+      if (!state || !state.data) return;
+
       // Remove any future states if we're in the middle of the history
-      if (this.currentHistoryIndex < this.history.length - 1) {
-        this.history = this.history.slice(0, this.currentHistoryIndex + 1);
+      if (this.gridOperations.currentHistoryIndex < this.gridOperations.history.length - 1) {
+        this.gridOperations.history = this.gridOperations.history.slice(0, this.gridOperations.currentHistoryIndex + 1);
       }
-      
-      // Create a deep copy of the state
-      const newState = {
-        data: JSON.parse(JSON.stringify(state.data)),
-        headers: [...state.headers]
-      };
-      
-      // Add new state
-      this.history.push(newState);
-      this.currentHistoryIndex = this.history.length - 1;
+
+      this.gridOperations.saveState();
     },
     
     undo() {
@@ -587,8 +642,9 @@ export default {
 
     async executeSelectedCleanings(message) {
       this.loading = true;
+      this.isRetrying = false;
+      
       try {
-        // Get only the selected suggestions
         const selectedOperations = message.suggestions.filter(
           (suggestion, idx) => message.selectedSuggestions[idx]
         );
@@ -597,31 +653,61 @@ export default {
           throw new Error('No cleaning operations selected');
         }
 
-        const response = await axios.post('/api/clean/execute', {
-          data: this.gridOperations.getDataForServer(),
-          suggestions: selectedOperations
-        });
-
-        if (response.data.data) {
-          // Use the new updateFromServerResponse method
-          const updatedData = this.gridOperations.updateFromServerResponse(response.data);
-          
-          // Update the local data references
-          this.tableData = updatedData.data;
-          this.headers = updatedData.headers;
-          
-          // Add success message to chat
-          this.chatMessages.push({
-            type: 'bot',
-            text: `Successfully applied cleaning operations. ${updatedData.changedRows.length} rows were modified.`,
-            code: response.data.code
+        const executeCleaningRequest = async (operations, context = '', error = null) => {
+          return await axios.post('/api/clean/execute', {
+            data: this.gridOperations.getDataForServer(),
+            suggestions: operations,
+            context: context || message.context,
+            previousError: error // Pass the error to the server
           });
-        }
+        };
 
+        // First attempt
+        try {
+          const response = await executeCleaningRequest(selectedOperations);
+          await this.handleCleaningResponse(response);
+        } catch (error) {
+          // If first attempt fails, try again with error context
+          if (!this.isRetrying && error.response?.data?.error) {
+            this.isRetrying = true;
+            
+            // Display the first error
+            this.displayError({
+              data: {
+                error: {
+                  message: error.response.data.error.message || error.response.data.error,
+                  pythonError: error.response.data.error.pythonError,
+                  code: error.response.data.error.code
+                }
+              }
+            });
+
+            try {
+              
+              // Add the error suggestion to the selected operations
+              const errorSuggestion = `Take care of the following error: "${error.response.data.error.message || error.response.data.error}"`;
+              selectedOperations.unshift(errorSuggestion); // Add the error suggestion at the beginning
+
+              const retryResponse = await executeCleaningRequest(
+                selectedOperations, 
+                message.context,
+                error.response.data.error // Pass the original error
+              );
+              await this.handleCleaningResponse(retryResponse);
+            } catch (retryError) {
+              // If retry also fails, show the error
+              this.handleError(retryError);
+            }
+          } else {
+            // If not retrying or no error message, show the original error
+            this.handleError(error);
+          }
+        }
       } catch (error) {
         this.handleError(error);
       } finally {
         this.loading = false;
+        this.isRetrying = false;
         
         // Scroll to bottom of chat
         await this.$nextTick();
@@ -631,12 +717,29 @@ export default {
       }
     },
 
+    async handleCleaningResponse(response) {
+      if (response.data.data) {
+        // Use the updateFromServerResponse method
+        const updatedData = this.gridOperations.updateFromServerResponse(response.data);
+        await this.updateTableData(updatedData.data);
+        
+        // Add success message to chat
+        this.chatMessages.push({
+          type: 'bot',
+          text: `Successfully applied cleaning operations. ${updatedData.changedRows?.length || 0} rows were modified.`,
+          code: response.data.code
+        });
+      } else {
+        throw new Error('No data returned from cleaning operation');
+      }
+    },
+
     handleError(error) {
       const errorMessage = {
         type: 'bot',
         text: 'An error occurred:',
         error: {
-          message: error.response?.data?.error?.message || error.message,
+          message: error.response?.data?.error?.message || error.response?.data?.error || error.message,
           pythonError: error.response?.data?.error?.pythonError,
           code: error.response?.data?.error?.code
         }
@@ -882,6 +985,41 @@ export default {
       });
       
       this.excelHeaders = headers;
+    },
+
+    handleColumnResize() {
+      if (this.$refs.hotTable?.hotInstance) {
+        this.$refs.hotTable.hotInstance.render();
+      }
+    },
+
+    async updateTableData(newData, newHeaders = null) {
+      const hot = this.$refs.hotTable?.hotInstance;
+      if (!hot) return;
+
+      // Batch updates to prevent multiple renders
+      hot.batchRender(() => {
+        if (newData) {
+          this.gridOperations.updateData(newData);
+          hot.loadData(this.gridOperations.getData());
+        }
+        
+        if (newHeaders) {
+          this.gridOperations.updateHeaders(newHeaders);
+          hot.updateSettings({
+            colHeaders: this.gridOperations.getHeaders(),
+            columns: this.gridOperations.getColumns()
+          });
+        }
+      });
+
+      // Update settings after batch render
+      this.hotSettings = {
+        ...this.hotSettings,
+        data: this.gridOperations.getData(),
+        colHeaders: this.gridOperations.getHeaders(),
+        columns: this.gridOperations.getColumns()
+      };
     }
   }
 }
@@ -907,17 +1045,41 @@ export default {
 
 .grid-wrapper {
   flex: 1;
-  overflow: hidden;
   position: relative;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  height: calc(100vh - 200px);
+  overflow: hidden;
 }
 
 .grid-component {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 100% !important;
+  width: 100%;
+  height: 100%;
+}
+
+:deep(.handsontable) {
+  font-size: 14px;
+}
+
+:deep(.handsontable .htDimmed) {
+  color: #777;
+}
+
+:deep(.handsontable .current) {
+  background-color: rgba(0, 123, 255, 0.1) !important;
+}
+
+:deep(.handsontable .htSelected) {
+  background-color: rgba(0, 123, 255, 0.2) !important;
+}
+
+:deep(.handsontable td) {
+  padding: 4px 8px;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .excel-toolbar {
@@ -1576,17 +1738,6 @@ export default {
   position: relative;
 }
 
-.data-grid th:first-child,
-.data-grid td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 2;
-}
-
-.data-grid th.row-number-header {
-  z-index: 3;
-}
-
 .code-block-wrapper {
   max-height: 300px;
   overflow-y: auto;
@@ -1731,7 +1882,6 @@ export default {
 .suggestion-item:last-child {
   border-bottom: none;
 }
-
 .suggestion-label {
   display: flex;
   align-items: flex-start;
@@ -1774,33 +1924,6 @@ export default {
   height: 600px;
   width: 100%;
   --rgCol-size: 150px;
-}
-
-:deep(.revo-grid-header) {
-  background-color: #f8f9fa;
-  font-weight: bold;
-}
-
-:deep(.revo-grid-cell) {
-  padding: 8px;
-  border: 1px solid #ddd;
-}
-
-:deep(.revo-grid-cell.selected) {
-  background-color: rgba(51, 153, 255, 0.2);
-}
-
-:deep(.revo-grid-cell.editing) {
-  padding: 0;
-}
-
-:deep(.revo-grid-cell.editing input) {
-  width: 100%;
-  height: 100%;
-  padding: 8px;
-  border: none;
-  outline: none;
-  box-sizing: border-box;
 }
 
 .loading-message {
@@ -1846,5 +1969,52 @@ export default {
     transform: scale(1);
     opacity: 1;
   }
+}
+
+.chat-input-container {
+  position: sticky;
+  bottom: 0;
+  background: white;
+  padding: 16px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.chat-input-container textarea {
+  flex: 1;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  resize: vertical;
+  font-size: 14px;
+  line-height: 1.4;
+  font-family: inherit;
+}
+
+.chat-input-container button {
+  padding: 12px 20px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s;
+}
+
+.chat-input-container button:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.chat-input-container button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
 }
 </style>

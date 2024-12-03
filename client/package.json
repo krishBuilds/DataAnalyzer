@@ -3,19 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "serve": "vue-cli-service serve --sourcemap",
+    "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
     "lint": "vue-cli-service lint"
   },
   "dependencies": {
-    "@revolist/revogrid": "^4.11.0",
+    "@handsontable/vue3": "^14.6.1",
     "axios": "^1.7.7",
     "core-js": "^3.8.3",
     "dompurify": "^3.2.1",
+    "handsontable": "^14.6.1",
     "html2canvas": "^1.4.1",
     "plotly.js-dist": "^2.35.2",
     "vue": "^3.2.13",
-    "vue-excel-editor": "^1.5.23",
     "vue-router": "^4.2.5",
     "vuex": "^4.1.0",
     "xlsx": "^0.18.5"
