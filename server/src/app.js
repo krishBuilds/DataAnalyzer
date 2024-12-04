@@ -710,3 +710,53 @@ app.post('/api/clean/execute', async (req, res) => {
     });
   }
 });
+
+// Add new endpoint for suggesting table header
+app.post('/api/suggest-header', async (req, res) => {
+  try {
+    const { data, fileName } = req.body;
+    
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      return res.status(400).json({ 
+        error: 'Invalid data format. Expected non-empty array of objects.' 
+      });
+    }
+
+    // Get sample data for header suggestion
+    const sampleData = data.slice(0, 5);
+    const headers = Object.keys(sampleData[0] || {});
+
+    const systemPrompt = `You are a data analysis assistant. Based on the table structure and sample data, suggest a clear and concise header/title for this dataset. Keep it short and professional.`;
+    const userPrompt = `
+Table Headers: ${JSON.stringify(headers)}
+Sample Data: ${JSON.stringify(sampleData, null, 2)}
+File Name: ${fileName || 'Untitled'}
+
+Suggest a clear, professional title for this dataset that describes its content. Keep it under 60 characters.`;
+
+    const completion = await openai.chat.completions.create({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      model: "gpt-4",
+      temperature: 0.3,
+      max_tokens: 60
+    });
+
+    const suggestedTitle = completion.choices[0].message.content.trim();
+    res.json({ 
+      title: suggestedTitle,
+      stats: {
+        rowCount: data.length,
+        columnCount: headers.length
+      }
+    });
+  } catch (error) {
+    debug('Error suggesting header:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate header suggestion',
+      details: error.message 
+    });
+  }
+});

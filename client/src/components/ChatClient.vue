@@ -1,28 +1,11 @@
 <template>
-  <div class="data-container">
-    <!-- Left side: Table Section -->
-    <div class="table-section">
-      <div class="file-upload">
-        <div class="upload-row">
-          <input 
-            type="file" 
-            @change="handleFileUpload" 
-            accept=".csv,.xlsx,.xls"
-            ref="fileInput"
-          >
-          <span class="file-info">Supported formats: CSV, XLSX, XLS</span>
-        </div>
-      </div>
-
-      <div class="excel-toolbar">
+        <div class="excel-toolbar">
         <div class="toolbar-left">
           <button @click="undo" :disabled="!canUndo" class="toolbar-btn">
             <i class="fas fa-undo"></i>
-            Undo
           </button>
           <button @click="redo" :disabled="!canRedo" class="toolbar-btn">
             <i class="fas fa-redo"></i>
-            Redo
           </button>
         </div>
         
@@ -47,8 +30,35 @@
             Export XLSX
           </button>
         </div>
+
+        <!-- Move file upload here -->
+        <div class="file-upload">
+          <div class="upload-row">
+            <input 
+              type="file" 
+              @change="handleFileUpload" 
+              accept=".csv,.xlsx,.xls"
+              ref="fileInput"
+            >
+          </div>
+        </div>
       </div>
 
+  <div class="data-container">
+    <!-- New header row, not visible for some reason-->
+    <div v-if="tableData.length" class="table-header-row">
+      <div class="header-content">
+        <h2>{{ tableTitle || 'Dataset Overview' }}</h2>
+        <div class="file-info">
+          <span v-if="fileName"><i class="fas fa-file"></i> {{ fileName }}</span>
+          <span><i class="fas fa-table"></i> {{ tableData.length }} rows</span>
+          <span><i class="fas fa-columns"></i> {{ headers.length }} columns</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Left side: Table Section -->
+    <div class="table-section">
       <div class="grid-wrapper">
         <hot-table
           ref="hotTable"
@@ -1028,36 +1038,38 @@ export default {
 <style scoped>
 .data-container {
   display: flex;
-  gap: 20px;
-  height: 100vh;
-  padding: 10px 20px;
-  box-sizing: border-box;
+  height: calc(100vh - 56px);
+  width: 100vw;
   overflow: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 .table-section {
-  flex: 2;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  overflow: hidden;
+  min-width: 0;
 }
 
 .grid-wrapper {
   flex: 1;
   position: relative;
   border: 1px solid #ddd;
-  border-radius: 4px;
-  margin-bottom: 16px;
-  height: calc(100vh - 200px);
-  overflow: hidden;
+  margin: 0;
+  overflow: auto;
 }
 
 .grid-component {
   width: 100%;
   height: 100%;
 }
-
+:deep(.handsontable th) {
+  text-align: center;
+  background-color: #e9ecef;
+  color: #495057;
+  font-weight: 600;
+}
 :deep(.handsontable) {
   font-size: 14px;
 }
@@ -1080,53 +1092,70 @@ export default {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
 }
 
 .excel-toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px;
-  background: #f5f5f5;
+  padding: 8px 16px;
+  background: #f8f9fa;
   border-bottom: 1px solid #ddd;
+  gap: 24px;
 }
 
-.toolbar-left,
+.toolbar-left, 
 .toolbar-center,
 .toolbar-right {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-upload {
+  order: -1;
+  margin-right: auto;
+}
+
+.upload-row {
+  display: flex;
   align-items: center;
 }
 
 .toolbar-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 6px 12px;
   border: 1px solid #ddd;
   border-radius: 4px;
   background: white;
   cursor: pointer;
-  transition: all 0.2s;
+  font-size: 13px;
+  height: 32px;
+  white-space: nowrap;
 }
 
-.toolbar-btn:hover:not(:disabled) {
-  background: #f0f0f0;
-}
-
-.toolbar-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.grid-wrapper {
+  flex: 1;
+  position: relative;
+  border: 1px solid #ddd;
+  height: calc(100vh - 56px);
+  overflow: hidden;
 }
 
 .chat-section {
-  flex: 1;
-  min-width: 300px;
-  max-width: 500px;
+  width: 380px;
+  min-width: 380px;
+  max-width: 380px;
+  height: 100%;
+  border-left: 1px solid #ddd;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  background: white;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 .chat-container {
@@ -1138,6 +1167,8 @@ export default {
   border: 1px solid #ddd;
   text-align: left;
   overflow: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 .chat-container h3 {
@@ -1154,6 +1185,27 @@ export default {
   flex-direction: column;
   gap: 10px;
   text-align: left;
+  margin: 0;
+}
+
+.table-header-row {
+  padding: 12px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 16px;
+}
+
+.header-content h2 {
+  margin: 0;
+  color: #2c3e50;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
 
 .message {
@@ -1224,16 +1276,14 @@ export default {
 }
 
 .file-upload {
-  margin: 10px 0;
-  padding: 12px;
-  border: 2px dashed #ccc;
-  border-radius: 8px;
+  margin: 0;
+  padding: 0;
 }
 
 .upload-row {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 8px;
 }
 
 .file-info {
@@ -1980,6 +2030,7 @@ export default {
   display: flex;
   gap: 12px;
   align-items: flex-start;
+  margin: 0;
 }
 
 .chat-input-container textarea {

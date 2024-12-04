@@ -92,7 +92,7 @@ class DataCleaningRequest {
   async process(question, data, selectedIndices) {
     let pythonCode = '';
     try {
-      const systemPrompt = `You are a data cleaning assistant. Analyze the dataset and suggest improvements to make it clean and ready for analysis. Focus on data consistency, empty values, formatting, and overall quality, and misrepresentation that might have crept in the data. Also consider renaming the headers if in bad shape. Focus is to make the data cleaner and standardized (add a new column), consider adding a new column in case there are lot of changes in a column. Make the table data clean.
+      const systemPrompt = `You are a data cleaning assistant. Analyze the dataset and suggest improvements to make it clean and ready for analysis. Focus on data consistency, empty values, formatting, and overall quality, and misrepresentation that might have crept in the data. Also consider renaming the headers if in bad shape. Focus is to make the data cleaner and standardized, consider adding a new column in case there are lot of changes in a column such as for standardizing case. Make the table data clean. Its a sequence operation in python so take care of each step. Especially take care of number of columns when renaming.
 
 Return your suggestions in this exact format without any markdown:
 {
@@ -161,6 +161,8 @@ Your code must:
 2. Start directly with imports - no description text
 3. Process the ENTIRE input dataset, not just the sample rows
 4. Include proper error handling
+5. Properly and carefully parse the data values based on the text format they are present
+6. Don't Use any unnecessary library
 
 Example structure:
 import pandas as pd
