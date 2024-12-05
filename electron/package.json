@@ -1,0 +1,44 @@
+{
+  "name": "data-analyzer-electron",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.dataanalyzer.app",
+    "productName": "Data Analyzer",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      {
+        "from": "../client/dist",
+        "to": "client/dist"
+      },
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": ["**/*", "!node_modules/**/*"]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  }
+} 

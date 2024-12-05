@@ -11,13 +11,11 @@
       "sourceMapPathOverrides": {
         "webpack:///./src/*": "${webRoot}/src/*",
         "webpack:///src/*": "${webRoot}/src/*"
-
       },
       "userDataDir": false,
+      "port": 9223,
       "runtimeArgs": [
-        "--new-window",
-        "--remote-debugging-port=9222",
-        "--user-data-dir=${workspaceFolder}/.chrome-debug-profile"
+        "--remote-debugging-port=9223"
       ]
     }
   ]

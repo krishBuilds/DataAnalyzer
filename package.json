@@ -1,0 +1,20 @@
+{
+    "name": "data-analyzer-electron",
+    "version": "1.0.0",
+    "private": true,
+    "workspaces": [
+      "client",
+      "server",
+      "electron"
+    ],
+    "scripts": {
+        "dev": "concurrently \"cd client && npm run serve\" \"cd server && npm run dev\" \"cd electron && npm run dev\"",
+        "build": "npm run build:client && npm run build:electron",
+        "build:client": "cd client && npm run build",
+        "build:electron": "cd electron && npm run build",
+        "start": "cd electron && npm start"
+        },
+    "devDependencies": {
+      "concurrently": "^8.2.2"
+    }
+  }

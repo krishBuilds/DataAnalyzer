@@ -15,7 +15,8 @@ client/dist/
 client/build/
 server/dist/
 server/build/
-
+electron/dist/
+electron/node_modules/
 # Environment variables
 .env
 client/.env.local
@@ -66,3 +67,5 @@ client/.chrome-debug-profile
 #temp files
 server/src/temp
 server/src/plots
+node_modules
+electron/node_modules/

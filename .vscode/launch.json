@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "Debug Full Stack",
+      "configurations": [
+        "Debug Server",
+        "Vue App Debug",
+        "Debug Electron Main"
+      ],
+      "presentation": {
+        "hidden": false,
+        "group": "Debug",
+        "order": 1
+      },
+      "stopAll": true
+    }
+  ]
+} 
