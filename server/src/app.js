@@ -149,7 +149,7 @@ if __name__ == "__main__":
 
 const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
 Your code must:
-1. Include all necessary imports (pandas, json, sys, plotly)
+1. Include all necessary imports (pandas, json, sys, plotly) and dont add any other imports mentioned in code 
 2. Start directly with imports - no description text
 3. Create clear and informative visualizations
 4. Save plots as interactive HTML file and return plot_html and dont add any image related code
@@ -223,7 +223,7 @@ if __name__ == "__main__":
         sys.exit(1)`
 
 // Modify the getRandomSampleRows function to handle mixed sampling
-function getRandomSampleRows(data, selectedIndices = [], totalSamples = 15) {
+function getRandomSampleRows(data, selectedIndices = [], totalSamples = 40) {
   if (!data || !data.length) return [];
   
   let selectedSamples = [];
@@ -244,7 +244,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 15) {
       .slice(0, 7);
     
     // Get remaining samples from unselected rows to reach total of 15
-    const remainingSamples = Math.max(15 - selectedSamples.length, 8);
+    const remainingSamples = Math.max(40 - selectedSamples.length, 8);
     const unselectedData = dataArray
       .filter((_, index) => !selectedIndices.includes(index))
       .map((row, idx) => ({
@@ -256,7 +256,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 15) {
       .sort(() => 0.5 - Math.random())
       .slice(0, remainingSamples);
   } else {
-    // If no selection, get 15 samples (or all rows if less) from the full dataset
+    // If no selection, get 40 samples (or all rows if less) from the full dataset
     unselectedSamples = dataArray
       .map((row, idx) => ({
         ...row,
@@ -264,7 +264,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 15) {
         _isSelected: false
       }))
       .sort(() => 0.5 - Math.random())
-      .slice(0, Math.min(15, dataArray.length));
+      .slice(0, Math.min(40, dataArray.length));
   }
   
   return [...selectedSamples, ...unselectedSamples];
@@ -350,14 +350,14 @@ ${JSON.stringify(selectedSamples, null, 2)}
 
 Sample from other rows (${unselectedSamples.length} rows):
 ${JSON.stringify(unselectedSamples, null, 2)}`
-  : `Random sample of data (showing 5 of ${currentData.length} total rows):
+  : `Random sample of data (showing 15 of ${currentData.length} total rows):
 ${JSON.stringify(sampleRows.map(row => {
     const { _isSelected, _rowIndex, ...cleanRow } = row;
     return cleanRow;
   }), null, 2)}`}
 
 Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample.
-${isVisualization ? 'Create a visualization based on the request. Return the plot as a base64 encoded PNG image.' : 'Process the data according to the request.'}
+${isVisualization ? 'Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data. Return the plot as a base64 encoded PNG image.' : 'Process the data according to the user request.'}
 
 Task: ${question}`;
 

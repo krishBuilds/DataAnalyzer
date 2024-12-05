@@ -88,7 +88,7 @@ if __name__ == "__main__":
         sys.exit(1)`;
 
 // First, add the getRandomSampleRows helper function
-function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
+function getRandomSampleRows(data, selectedIndices = [], totalSamples = 30) {
   if (!data || !data.length) return [];
   
   let selectedSamples = [];
@@ -98,7 +98,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
   const dataArray = Array.isArray(data) ? data : Object.values(data);
   
   if (selectedIndices.length > 0) {
-    // Get exactly 2 samples from selected rows (or all if less than 2)
+    // Get up to 10 samples from selected rows (or all if less)
     const selectedData = selectedIndices.map(index => ({
       ...dataArray[index],
       _rowIndex: index,
@@ -106,9 +106,10 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
     }));
     selectedSamples = selectedData
       .sort(() => 0.5 - Math.random())
-      .slice(0, 2);
+      .slice(0, 10);
     
-    // Get exactly 3 samples from unselected rows
+    // Get remaining samples from unselected rows to reach total of 30
+    const remainingSamples = Math.max(30 - selectedSamples.length, 20);
     const unselectedData = dataArray
       .filter((_, index) => !selectedIndices.includes(index))
       .map((row, idx) => ({
@@ -118,9 +119,9 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
       }));
     unselectedSamples = unselectedData
       .sort(() => 0.5 - Math.random())
-      .slice(0, 3);
+      .slice(0, remainingSamples);
   } else {
-    // If no selection, get 5 samples from the full dataset
+    // If no selection, get 30 samples (or all rows if less) from the full dataset
     unselectedSamples = dataArray
       .map((row, idx) => ({
         ...row,
@@ -128,7 +129,7 @@ function getRandomSampleRows(data, selectedIndices = [], totalSamples = 5) {
         _isSelected: false
       }))
       .sort(() => 0.5 - Math.random())
-      .slice(0, 5);
+      .slice(0, Math.min(30, dataArray.length));
   }
   
   return [...selectedSamples, ...unselectedSamples];
@@ -214,6 +215,7 @@ Return the response in this format:
         const plotPrompt = `Create a ${suggestion.plotType} visualization for the data.
 The plot should be clear, informative, and properly labeled. The data should be correctly transformed for visual representation.
 The axis should not just dole out the numbers, but they should be appropriately scaled and maintain the aspect ratio for visual clarity.
+Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data. Return the plot as a base64 encoded PNG image.
 For the dapa plot the: ${suggestion.description}
 
 Use the following sample data (4 random rows):
