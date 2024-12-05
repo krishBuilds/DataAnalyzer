@@ -45,8 +45,8 @@
       </div>
 
   <div class="data-container">
-    <!-- New header row, not visible for some reason-->
-    <div v-if="tableData.length" class="table-header-row">
+    <!-- Comment out header row for now -->
+    <!--<div v-if="tableData.length" class="table-header-row">
       <div class="header-content">
         <h2>{{ tableTitle || 'Dataset Overview' }}</h2>
         <div class="file-info">
@@ -55,7 +55,7 @@
           <span><i class="fas fa-columns"></i> {{ headers.length }} columns</span>
         </div>
       </div>
-    </div>
+    </div>-->
 
     <!-- Left side: Table Section -->
     <div class="table-section">
@@ -353,6 +353,9 @@ export default {
           this.gridOperations.handleCellUpdate(row, prop, newValue);
         }
       });
+
+      // Update computed properties
+      this.$forceUpdate();
     },
 
     handleAfterSelection(row, col, row2, col2) {
@@ -611,16 +614,16 @@ export default {
     },
     
     undo() {
-      if (this.gridOperations.undo()) {
-        this.tableData = this.gridOperations.getData();
-        this.headers = this.gridOperations.getHeaders();
+      if (this.canUndo) {
+        this.gridOperations.undo();
+        this.updateTableData(this.gridOperations.getData());
       }
     },
     
     redo() {
-      if (this.gridOperations.redo()) {
-        this.tableData = this.gridOperations.getData();
-        this.headers = this.gridOperations.getHeaders();
+      if (this.canRedo) {
+        this.gridOperations.redo();
+        this.updateTableData(this.gridOperations.getData());
       }
     },
 
@@ -1003,33 +1006,20 @@ export default {
       }
     },
 
-    async updateTableData(newData, newHeaders = null) {
-      const hot = this.$refs.hotTable?.hotInstance;
-      if (!hot) return;
-
-      // Batch updates to prevent multiple renders
-      hot.batchRender(() => {
-        if (newData) {
-          this.gridOperations.updateData(newData);
-          hot.loadData(this.gridOperations.getData());
-        }
-        
-        if (newHeaders) {
-          this.gridOperations.updateHeaders(newHeaders);
-          hot.updateSettings({
-            colHeaders: this.gridOperations.getHeaders(),
-            columns: this.gridOperations.getColumns()
-          });
-        }
-      });
-
-      // Update settings after batch render
+    async updateTableData(data) {
       this.hotSettings = {
         ...this.hotSettings,
-        data: this.gridOperations.getData(),
+        data: data,
         colHeaders: this.gridOperations.getHeaders(),
         columns: this.gridOperations.getColumns()
       };
+
+      // Force table refresh
+      await this.$nextTick();
+      if (this.$refs.hotTable?.hotInstance) {
+        this.$refs.hotTable.hotInstance.loadData(data);
+        this.$refs.hotTable.hotInstance.render();
+      }
     }
   }
 }
