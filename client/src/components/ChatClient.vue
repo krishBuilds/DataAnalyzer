@@ -58,7 +58,7 @@
     </div>-->
 
     <!-- Left side: Table Section -->
-    <div class="table-section">
+    <div class="table-section" :style="{ width: tableWidth }">
       <div class="grid-wrapper">
         <hot-table
           ref="hotTable"
@@ -72,8 +72,26 @@
       </div>
     </div>
 
+    <!-- Add resizer between table and chat -->
+    <div 
+      class="resizer"
+      @mousedown="startResize"
+      @dblclick="resetSize">
+      <div class="resizer-handle"></div>
+    </div>
+
     <!-- Right side: Chat Section -->
-    <div class="chat-section">
+    <div class="chat-section" :style="{ width: `${chatWidth}px` }">
+      
+          <!-- Resizer -->
+      <div 
+        class="resizer"
+        :class="{ 'is-dragging': isDragging }" 
+        @mousedown="startResize"
+        @dblclick="resetSize">
+        <div class="resizer-handle"></div>
+      </div>
+
       <div class="chat-container">
         <h3>AI Assistant</h3>
         <div class="chat-messages" ref="chatMessages">
@@ -126,7 +144,12 @@
                 <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index] }">▼</span>
               </div>
               <div class="code-block-wrapper" v-show="expandedCodes[index]">
-                <pre class="code-block"><code>{{ message.code }}</code></pre>
+                <MonacoEditor
+                  :value="message.code"
+                  :language="'python'"
+                  :theme="'vs-dark'"
+                  class="code-editor"
+                />
               </div>
             </div>
             
@@ -208,6 +231,7 @@ import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { nextTick } from 'vue';
 import { HandsontableOperations } from '../operations/HandsontableOperations';
+import MonacoEditor from './MonacoEditor.vue';
 
 // Register Handsontable modules
 registerAllModules();
@@ -215,7 +239,8 @@ registerAllModules();
 export default {
   name: 'DataTable',
   components: {
-    HotTable
+    HotTable,
+    MonacoEditor
   },
   data() {
     return {
@@ -264,6 +289,10 @@ export default {
       selectedPlotHtml: null,
       isRetrying: false,
       expandedCodes: {},
+      chatWidth: 380,
+      isDragging: false,
+      minChatWidth: 280,
+      maxChatWidth: 800,
     }
   },
   created() {
@@ -315,6 +344,12 @@ export default {
     },
     canRedo() {
       return this.gridOperations?.currentHistoryIndex < (this.gridOperations?.history.length - 1);
+    },
+    tableFlexBasis() {
+      return `calc(100% - ${this.chatWidth}px)`;
+    },
+    tableWidth() {
+      return `calc(100% - ${this.chatWidth}px - 4px)`; // Account for resizer width
     }
   },
   directives: {
@@ -332,10 +367,15 @@ export default {
       console.log('Hot table instance:', this.$refs.hotTable?.hotInstance);
       this.onResize();
     });
+    window.addEventListener('mousemove', this.handleResize);
+    window.addEventListener('mouseup', this.stopResize);
   },
   beforeUnmount() {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
+    this.stopResize();
+    window.removeEventListener('mousemove', this.handleResize);
+    window.removeEventListener('mouseup', this.stopResize);
   },
   methods: {
     onResize() {
@@ -1020,6 +1060,40 @@ export default {
         this.$refs.hotTable.hotInstance.loadData(data);
         this.$refs.hotTable.hotInstance.render();
       }
+    },
+
+    startResize(event) {
+      this.isDragging = true;
+      this.initialX = event.clientX;
+      this.initialWidth = this.chatWidth;
+    },
+
+    handleResize(event) {
+      if (!this.isDragging) return;
+      
+      const diff = this.initialX - event.clientX;
+      const newWidth = Math.min(
+        Math.max(this.initialWidth + diff, this.minChatWidth),
+        this.maxChatWidth
+      );
+      
+      this.chatWidth = newWidth;
+      
+      // Force table refresh when resizing
+      if (this.$refs.hotTable?.hotInstance) {
+        this.$refs.hotTable.hotInstance.render();
+      }
+    },
+
+    stopResize() {
+      this.isDragging = false;
+    },
+
+    resetSize() {
+      this.chatWidth = 380; // Reset to default width
+      if (this.$refs.hotTable?.hotInstance) {
+        this.$refs.hotTable.hotInstance.render();
+      }
     }
   }
 }
@@ -1031,23 +1105,61 @@ export default {
   height: calc(100vh - 56px);
   width: 100vw;
   overflow: hidden;
-  margin: 0;
-  padding: 0;
+  position: relative;
 }
 
 .table-section {
   flex: 1;
+  min-width: 200px;
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+}
+
+.chat-section {
+  position: relative;
+  height: 100%;
+  border-left: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  background: white;
+  overflow: hidden;
+}
+
+.resizer {
+  width: 4px;
+  cursor: col-resize;
+  height: 100%;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+}
+
+.resizer:hover,
+.resizer.is-dragging {
+  background: #007fd4;
+}
+
+.resizer-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transition: background-color 0.1s;
+}
+
+.resizer:hover .resizer-handle {
+  background: rgba(0, 127, 212, 0.4);
 }
 
 .grid-wrapper {
   flex: 1;
   position: relative;
   border: 1px solid #ddd;
-  margin: 0;
-  overflow: auto;
+  height: 100%;
+  overflow: hidden;
 }
 
 .grid-component {
@@ -1126,32 +1238,11 @@ export default {
   white-space: nowrap;
 }
 
-.grid-wrapper {
-  flex: 1;
-  position: relative;
-  border: 1px solid #ddd;
-  height: calc(100vh - 56px);
-  overflow: hidden;
-}
-
-.chat-section {
-  width: 380px;
-  min-width: 380px;
-  max-width: 380px;
-  height: 100%;
-  border-left: 1px solid #ddd;
-  display: flex;
-  flex-direction: column;
-  background: white;
-  overflow: hidden;
-  margin: 0;
-  padding: 0;
-}
-
 .chat-container {
   background: #f8f9fa;
   border-radius: 8px;
   display: flex;
+  flex: 1;
   flex-direction: column;
   height: 100%;
   border: 1px solid #ddd;
@@ -1199,22 +1290,26 @@ export default {
 }
 
 .message {
-  padding: 10px;
+  padding: 12px;
   border-radius: 8px;
-  max-width: 75%;
+  width: calc(100% - 24px); /* Full width minus padding */
+  box-sizing: border-box;
+  margin-bottom: 8px;
 }
 
 .message.user {
   background: #007bff;
   color: white;
   align-self: flex-end;
+  max-width: 75%;
 }
 
 .message.bot {
   background: #e9ecef;
   color: #212529;
   align-self: flex-start;
-  margin-right: auto;
+  width: 100%; /* Force full width for bot messages */
+  max-width: 100%; /* Override max-width */
 }
 
 .chat-input {
@@ -2057,5 +2152,69 @@ export default {
 .chat-input-container button:disabled {
   background: #6c757d;
   cursor: not-allowed;
+}
+
+.resizer {
+  width: 8px;
+  cursor: col-resize;
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  touch-action: none;
+}
+
+.resizer-line {
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ddd;
+  transition: background-color 0.2s;
+}
+
+.resizer:hover .resizer-line {
+  background: #999;
+}
+
+.code-block-container {
+  margin: 10px 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.code-block-wrapper {
+  height: 300px;
+  width: 100%;
+}
+
+.code-editor {
+  height: 100%;
+  width: 100%;
+}
+
+.code-header {
+  padding: 8px;
+  background: #f5f5f5;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.code-label {
+  font-weight: 500;
+  color: #333;
+}
+
+.toggle-icon {
+  transition: transform 0.2s ease;
+}
+
+.toggle-icon.expanded {
+  transform: rotate(180deg);
 }
 </style>

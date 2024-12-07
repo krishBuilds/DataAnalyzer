@@ -18,12 +18,14 @@
                 "!**/node_modules/**"
             ],
             "env": {
-                "DEBUG": "app:*",
-                "ELECTRON": "true"
+                "DEBUG": "app:*"
             },
             "outFiles": [
                 "${workspaceFolder}/src/**/*.js"
-            ]
+            ],
+            "restart": true,
+            "runtimeExecutable": "nodemon",
+            "runtimeArgs": ["--inspect"]
         }
     ]
 }
