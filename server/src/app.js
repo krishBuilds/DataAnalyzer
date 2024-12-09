@@ -14,6 +14,8 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 const PlotSuggestor = require('./PlotSuggestedGraphs');
 const DataCleaningRequest = require('./DataCleaningRequest');
+const PythonDebugger = require('./PythonDebugger');
+const PythonExecutor = require('./PythonExecutor');
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -64,11 +66,21 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir);
 }
 
+// Add this helper function to prepare data by removing last row
+function prepareDataForProcessing(data) {
+  if (!Array.isArray(data) || data.length === 0) {
+    return [];
+  }
+  // Remove the last row from the data
+  return data.slice(0, -1);
+}
+
 // New endpoint to upload initial data
 app.post('/api/upload', async (req, res) => {
   try {
     const { data } = req.body;
-    currentData = data;
+    const processedData = prepareDataForProcessing(data);
+    currentData = processedData;
     res.json({ message: 'Data uploaded successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -132,20 +144,16 @@ def process_data(data):
     # Your data processing code here
     # Process the entire DataFrame, not just the sample
     
-    return {
-        'data': df.to_dict('records')
-    }
+    return df.to_dict('records')
 
 if __name__ == "__main__":
     try:
         input_data = json.loads(sys.argv[1])
         result = process_data(input_data)
-        print(json.dumps(result))
+        print(json.dumps({'data': result}))
     except Exception as e:
-        print(json.dumps({
-            'error': str(e),
-            'data': [],
-        }))`;
+        sys.stderr.write(str(e))
+        sys.exit(1)`;
 
 const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
 Your code must:
@@ -163,52 +171,34 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 def create_visualization(df):
-    try:
-        # Create plot using plotly, example plot below
-        # fig = px.scatter(df, x=df.columns[0], y=df.columns[1])  # Example plot
-        
-        # Update layout for better appearance
-        fig.update_layout(
-            template='plotly_white',
-            title_x=0.5,
-            margin=dict(t=50, l=50, r=50, b=50)
-        )
-        
-        # Save as HTML
-        plot_path = 'plot.html'
-        fig.write_html(plot_path, full_html=True, include_plotlyjs=True)
-        
-        # Read the HTML content
-        with open(plot_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
+    # Create plot using plotly, example plot below
+    # fig = px.scatter(df, x=df.columns[0], y=df.columns[1])  # Example plot
+    
+    # Update layout for better appearance
+    fig.update_layout(
+        template='plotly_white',
+        title_x=0.5,
+        margin=dict(t=50, l=50, r=50, b=50)
+    )
+    
+    # Save as HTML
+    plot_path = 'plot.html'
+    fig.write_html(plot_path, full_html=True, include_plotlyjs=True)
+    
+    # Read the HTML content
+    with open(plot_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
         
         return html_content
-            
-    except Exception as e:
-        raise Exception(f"Error creating visualization: {str(e)}")
-    finally:
-        # Cleanup
-        if 'fig' in locals():
-            fig.data = []
-            fig.layout = {}
-            del fig
-
 def process_data(data):
-    try:
-        df = pd.DataFrame(data)
-        
-        html_content = create_visualization(df)
-        
-        return {
-            'data': df.to_dict('records'),
-            'plot_html': html_content,  # Return full HTML content
-        }
-    except Exception as e:
-        print(json.dumps({
-            'error': str(e),
-            'data': [],
-        }))
-        sys.exit(1)
+    df = pd.DataFrame(data)
+    
+    html_content = create_visualization(df)
+    
+    return {
+        'data': df.to_dict('records'),
+        'plot_html': html_content,  # Return full HTML content
+    }
 
 if __name__ == "__main__":
     try:
@@ -216,10 +206,7 @@ if __name__ == "__main__":
         result = process_data(input_data)
         print(json.dumps(result))
     except Exception as e:
-        print(json.dumps({
-            'error': str(e),
-            'data': [],
-        }))
+        sys.stderr.write(str(e))
         sys.exit(1)`
 
 // Modify the getRandomSampleRows function to handle mixed sampling
@@ -280,17 +267,17 @@ async function prepareDataForPython(data) {
 }
 
 // Centralized error handling function
-function handleErrorResponse(res, error, pythonCode, processedData = '', errorData = '') {
-  const errorMessage = error || 'Python execution failed';
+function handleErrorResponse(errorString, pythonCode, processedData = '', errorData = '') {
+  const errorMessage = errorString || 'Python execution failed';
   const pythonError = errorData || processedData;
   
-  res.json({
+  return {
     error: {
       message: errorMessage,
       pythonError: pythonError,
       code: pythonCode
     }
-  });
+  };
 }
 
 // Modified analyze endpoint
@@ -300,19 +287,27 @@ app.post('/api/analyze', async (req, res, next) => {
   let responseHandled = false;
   
   try {
-    const { question, data, selectedRows, selectedIndices } = req.body;
+    const { question, data, selectedRows, selectedIndices, previousError } = req.body;
+    
+    // Remove last row from data before processing
+    const cleanerData = prepareDataForProcessing(data);
     
     const isVisualization = isVisualizationRequest(question);
-    const systemPrompt = isVisualization ? visualizationPrompt : dataProcessingPrompt;
+    const basePrompt = isVisualization ? visualizationPrompt : dataProcessingPrompt;
+    const systemPrompt = previousError 
+      ? `${basePrompt}\n\nPrevious attempt failed with error: ${previousError.message || previousError}. Please handle this error in your solution.`
+      : basePrompt;
     
-    if (data) {
-      currentData = data;
+    if (cleanerData) {
+      currentData = cleanerData;
     } else if (!currentData) {
       return res.status(400).json({ error: 'No data available. Please upload data first.' });
     }
 
     const headers = Object.keys(currentData[0]);
-    const sampleRows = getRandomSampleRows(currentData, selectedIndices);
+    // Adjust sample rows to work with processed data
+    const sampleRows = getRandomSampleRows(currentData, 
+      selectedIndices?.filter(idx => idx < currentData.length) || []);
     
     // Separate samples and clean up metadata
     const selectedSamples = sampleRows
@@ -357,7 +352,7 @@ ${JSON.stringify(sampleRows.map(row => {
   }), null, 2)}`}
 
 Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample.
-${isVisualization ? 'Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data. Return the plot as a base64 encoded PNG image.' : 'Process the data according to the user request.'}
+${isVisualization ? 'Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data .' : 'Process the data according to the user request.'}
 
 Task: ${question}`;
 
@@ -411,7 +406,7 @@ Task: ${question}`;
       
       if (!responseHandled) {
         responseHandled = true;
-        handleErrorResponse(res, error, pythonCode);
+        handleErrorResponse(error, pythonCode);
       }
     });
 
@@ -428,11 +423,6 @@ Task: ${question}`;
         length: chunk.length,
         preview: chunk.substring(0, 200) + (chunk.length > 200 ? '...' : '')
       });
-
-      /*if (!responseHandled) {
-        responseHandled = true;
-        handleErrorResponse(res, chunk, pythonCode);
-      }*/
     });
 
     pythonProcess.stderr.on('data', (data) => {
@@ -443,10 +433,11 @@ Task: ${question}`;
         length: chunk.length
       });
 
-       if (!responseHandled) {
-         responseHandled = true;
-         handleErrorResponse(res, chunk, pythonCode);
-       }
+      if (!responseHandled) {
+        responseHandled = true;
+        const error = handleErrorResponse(chunk, pythonCode);
+        res.json(error);
+      }
     });
 
     pythonProcess.on('close', async (code) => {
@@ -457,18 +448,12 @@ Task: ${question}`;
         killed: pythonProcess.killed
       });
 
-      // Clean up both script and data files
-      /*await cleanupFiles(
-        tempFilePath,
-        tempDataPath,
-        path.join(tempDir, 'temp_data.json')
-      );*/
-
       if (!responseHandled) {
         responseHandled = true;
         
+        // Check for error conditions
         if (code !== 0 || errorData) {
-          return handleErrorResponse(res, new Error('Python execution failed'), pythonCode, processedData, errorData);
+          return handleErrorResponse(res, new Error(errorData || 'Python execution failed'), pythonCode);
         }
         
         try {
@@ -515,7 +500,8 @@ Task: ${question}`;
               code: pythonCode,
             });
           } else if (result.error) {
-            return handleErrorResponse(res, result.error, pythonCode, processedData);
+            const error = handleErrorResponse(result.error, pythonCode, processedData);
+            return res.json(error);
           } else {
             return res.json({
               data: currentData,
@@ -534,7 +520,13 @@ Task: ${question}`;
                                 processedData.toLowerCase().includes('exception');
           
           if (looksLikeError) {
-            return handleErrorResponse(res, new Error('Python execution failed'), pythonCode, processedData, errorData);
+            const errorResponse = handleErrorResponse(
+              new Error('Python execution failed'), 
+              pythonCode, 
+              processedData, 
+              errorData
+            );
+            return res.json(errorResponse);
           } else {
             return res.json({
               data: currentData,
@@ -562,73 +554,8 @@ Task: ${question}`;
       );*/
       
       debug('Error in analyze endpoint:', error);
-      return handleErrorResponse(res, error, '');
-    }
-  }
-});
-
-// Add new endpoint for converting plot HTML to image
-app.post('/api/convert-plot', async (req, res) => {
-  const { html } = req.body;
-  const tempHtmlPath = path.join(tempDir, `plot_${Date.now()}.html`).replace(/\\/g, '\\\\');
-  const tempImagePath = path.join(tempDir, `plot_${Date.now()}.png`).replace(/\\/g, '\\\\');
-  const scriptPath = path.join(tempDir, `convert_${Date.now()}.py`);
-
-  try {
-    // Save HTML to temporary file
-    await fsPromises.writeFile(tempHtmlPath, html);
-
-    // Create Python script to convert HTML to image
-    const pythonCode = `
-import plotly.io as pio
-import base64
-import sys
-
-try:
-    # Load the HTML file
-    with open(r"${tempHtmlPath}", "r", encoding='utf-8') as f:
-        html_content = f.read()
-
-    # Use plotly.io to render the figure
-    fig = pio.from_html(html_content)
-
-    # Save the figure as an image
-    fig.write_image(r"${tempImagePath}", format="png", scale=2)  # scale=2 for better quality
-
-    # Read the image and convert to base64
-    with open(r"${tempImagePath}", "rb") as image_file:
-        encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
-    
-    print(encoded_image)
-except Exception as e:
-    print(f"Error: {str(e)}", file=sys.stderr)
-    sys.exit(1)
-`;
-
-    // Write Python script to temp file
-    await fsPromises.writeFile(scriptPath, pythonCode);
-
-    // Execute Python script
-    const { stdout, stderr } = await execAsync(`python "${scriptPath}"`);
-    
-    if (stderr) {
-      throw new Error(stderr);
-    }
-
-    res.json({ image: stdout.trim() });
-
-  } catch (error) {
-    console.error('Error converting plot:', error);
-    res.status(500).json({ 
-      error: 'Failed to convert plot to image',
-      details: error.message 
-    });
-  } finally {
-    // Clean up temporary files
-    try {
-      //await cleanupFiles(tempHtmlPath, tempImagePath, scriptPath);
-    } catch (cleanupError) {
-      console.error('Error cleaning up files:', cleanupError);
+      const errorResponse = handleErrorResponse(error, '');
+      return res.json(errorResponse);
     }
   }
 });
@@ -668,9 +595,11 @@ app.listen(PORT, () => {
 // Remove cleaning from analyze endpoint and add new endpoints
 app.post('/api/clean/suggest', async (req, res) => {
   try {
-    const { question, data } = req.body;
+    const { data, question } = req.body;
+    const processedData = prepareDataForProcessing(data);
+    
     const cleaningHandler = new DataCleaningRequest(openai);
-    const result = await cleaningHandler.process(question, data);
+    const result = await cleaningHandler.process(question, processedData);
     // Store the handler instance in app.locals for later use
     app.locals.cleaningHandler = cleaningHandler;
     res.json(result);
@@ -685,14 +614,11 @@ app.post('/api/clean/suggest', async (req, res) => {
 
 app.post('/api/clean/execute', async (req, res) => {
   try {
-    const { data, suggestions } = req.body;
+    const { data, suggestions, context, previousError } = req.body;
+    const processedData = prepareDataForProcessing(data);
     
-    if (!Array.isArray(suggestions)) {
-      throw new Error('Suggestions must be an array');
-    }
-
     const cleaningHandler = app.locals.cleaningHandler || new DataCleaningRequest(openai);
-    const result = await cleaningHandler.executeCleaning(data, suggestions);
+    const result = await cleaningHandler.executeCleaning(processedData, suggestions);
     
     res.json({
       data: result.data,
@@ -760,4 +686,27 @@ Suggest a clear, professional title for this dataset that describes its content.
       details: error.message 
     });
   }
+});
+
+const pyDebugger = new PythonDebugger();
+
+const pythonExecutor = new PythonExecutor();
+
+app.post('/api/debug/start', async (req, res) => {
+  try {
+    const { code, data, breakpoints } = req.body;
+    await pythonExecutor.executeCode(code, data, { 
+      debug: true, 
+      breakpoints 
+    });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Debug session error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/debug/stop', (req, res) => {
+  pyDebugger.stop();
+  res.json({ success: true });
 });

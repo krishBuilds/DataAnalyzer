@@ -2,10 +2,11 @@
   "version": "0.2.0",
   "compounds": [
     {
-      "name": "Debug Full Stack",
+      "name": "Debug Full Stack + Python",
       "configurations": [
         "Debug Server",
         "Vue App Debug",
+        "Python Debug",
         "Debug Electron Main"
       ],
       "presentation": {
@@ -14,6 +15,23 @@
         "order": 1
       },
       "stopAll": true
+    }
+  ],
+  "configurations": [
+    {
+      "name": "Python Debug",
+      "type": "python",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/server/src/temp",
+          "remoteRoot": "."
+        }
+      ]
     }
   ]
 } 

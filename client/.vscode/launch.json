@@ -10,12 +10,16 @@
       "sourceMaps": true,
       "sourceMapPathOverrides": {
         "webpack:///./src/*": "${webRoot}/src/*",
-        "webpack:///src/*": "${webRoot}/src/*"
+        "webpack:///src/*": "${webRoot}/src/*",
+        "webpack:///*": "${webRoot}/*"
       },
-      "userDataDir": false,
-      "port": 9223,
+      "userDataDir": "${workspaceFolder}/.vscode/chrome-debug-profile",
+      "port": 9222,
       "runtimeArgs": [
-        "--remote-debugging-port=9223"
+        "--remote-debugging-port=9222",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding"
       ]
     }
   ]

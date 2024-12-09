@@ -146,9 +146,12 @@
               <div class="code-block-wrapper" v-show="expandedCodes[index]">
                 <MonacoEditor
                   :value="message.code"
+                  :data="gridOperations.getData()"
+                  @dataframe-update="handleDataFrameUpdate"
                   :language="'python'"
                   :theme="'vs-dark'"
                   class="code-editor"
+                  :debug-mode="debugMode"
                 />
               </div>
             </div>
@@ -197,19 +200,34 @@
           </div>
         </div>
         <div class="chat-input-container">
-          <textarea
-            v-model="userMessage"
-            @keyup.enter.exact.prevent="sendMessage"
-            placeholder="Ask a question about your data..."
-            :disabled="loading || !gridOperations.getData().length"
-          ></textarea>
-          <button 
-            @click="sendMessage" 
-            :disabled="loading || !userMessage.trim() || !gridOperations.getData().length"
-            class="send-button"
-          >
-            <i class="fas fa-paper-plane"></i>
-          </button>
+          <div class="input-group">
+            <textarea 
+              v-model="userMessage"
+              @keydown.enter.exact.prevent="sendMessage"
+              placeholder="Type your message..."
+              :disabled="loading"
+            ></textarea>
+            <div class="controls-group">
+              <button 
+                @click="sendMessage" 
+                :disabled="loading || !userMessage.trim()"
+                class="send-button"
+              >
+                <i class="fas fa-paper-plane"></i>
+              </button>
+              <label class="toggle-switch">
+                <input 
+                  type="checkbox" 
+                  :checked="debugMode"
+                  @change="$emit('update:debugMode', $event.target.checked)"
+                />
+                <span class="slider">
+                  <i class="fas fa-bug"></i>
+                </span>
+                <small class="debug-label">Debug</small>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -289,10 +307,11 @@ export default {
       selectedPlotHtml: null,
       isRetrying: false,
       expandedCodes: {},
-      chatWidth: 380,
+      chatWidth: 437,
       isDragging: false,
       minChatWidth: 280,
       maxChatWidth: 800,
+      debugMode: false,
     }
   },
   created() {
@@ -545,19 +564,65 @@ export default {
 
       try {
         const selectedRowsData = this.getSelectedRowsData();
-        const response = await axios.post('/api/analyze', {
-          question,
-          data: this.gridOperations.getData(),
-          selectedRows: selectedRowsData,
-          selectedIndices: this.gridOperations.getSelectedRows()
-        });
+        const response = await this.executeAnalysis(question, selectedRowsData);
+        
+        if (response.data.error) {
+          // Display the first error
+          this.displayError({
+            data: {
+              error: {
+                message: response.data.error.message,
+                code: response.data.error.code
+              }
+            }
+          });
 
-        await this.handleSuccessResponse(response);
+          // Attempt retry with error context
+          const retryResponse = await this.executeAnalysis(
+            question,
+            selectedRowsData,
+            response.data.error
+          );
+
+          if (retryResponse.data.error) {
+            // Display retry error if it also fails
+            this.displayError({
+              data: {
+                error: {
+                  message: retryResponse.data.error.message,
+                  code: retryResponse.data.error.code
+                }
+              }
+            });
+          } else {
+            // Retry succeeded
+            await this.handleSuccessResponse(retryResponse);
+          }
+        } else {
+          // Initial attempt succeeded
+          await this.handleSuccessResponse(response);
+        }
       } catch (error) {
         this.handleError(error);
       } finally {
         this.loading = false;
       }
+    },
+
+    async executeAnalysis(question, selectedRowsData, previousError = null) {
+      const payload = {
+        question,
+        data: this.gridOperations.getData(),
+        selectedRows: selectedRowsData,
+        selectedIndices: this.gridOperations.getSelectedRows()
+      };
+
+      // If there was a previous error, include it in the payload
+      if (previousError) {
+        payload.previousError = previousError;
+      }
+
+      return await axios.post('/api/analyze', payload);
     },
 
     async handleSuccessResponse(response) {
@@ -615,7 +680,7 @@ export default {
     displayError(response) {
       this.chatMessages.push({ 
         type: 'bot', 
-        text: 'An error occurred while processing your request:',
+        text: 'An error occurred:',
         error: {
           message: response?.data?.error?.message,
           details: response?.data?.error?.details,
@@ -1094,6 +1159,10 @@ export default {
       if (this.$refs.hotTable?.hotInstance) {
         this.$refs.hotTable.hotInstance.render();
       }
+    },
+
+    toggleDebugMode() {
+      this.debugMode = !this.debugMode;
     }
   }
 }
@@ -1198,25 +1267,89 @@ export default {
 }
 
 .excel-toolbar {
-  display: flex;
+  display: grid;
+ grid-template-columns: auto 1fr auto;
   align-items: center;
   padding: 8px 16px;
   background: #f8f9fa;
   border-bottom: 1px solid #ddd;
   gap: 24px;
+  height:30px
 }
 
-.toolbar-left, 
-.toolbar-center,
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Add this new style for the black line */
+.excel-toolbar::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: -12.5vw; /* Extend beyond the toolbar width */
+  right: -12.5vw; /* Extend beyond the toolbar width */
+  height: 1px;
+  background-color: #000000;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.toolbar-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin-left: 30px;
+}
+
 .toolbar-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-left: auto;
+}
+
+.toolbar-btn, 
+.primary,
+.toolbar-right button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: white;
+  color: #444;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  height: 36px;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.toolbar-btn:hover:not(:disabled),
+.primary:hover:not(:disabled),
+.toolbar-right button:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #d0d0d0;
+  transform: translateY(-1px);
+}
+
+.toolbar-btn:disabled,
+.primary:disabled,
+.toolbar-right button:disabled {
+  background: #f5f5f5;
+  color: #999;
+  cursor: not-allowed;
+  border-color: #e0e0e0;
 }
 
 .file-upload {
   order: -1;
-  margin-right: auto;
+  margin-right: 100px;
 }
 
 .upload-row {
@@ -1224,18 +1357,24 @@ export default {
   align-items: center;
 }
 
-.toolbar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+/* Style file input */
+.file-upload input[type="file"] {
+  padding: 4px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
   background: white;
   cursor: pointer;
-  font-size: 13px;
-  height: 32px;
-  white-space: nowrap;
+}
+
+.file-upload input[type="file"]::-webkit-file-upload-button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #f5f5f5;
+  color: #444;
+  font-weight: 500;
+  margin-right: 8px;
+  cursor: pointer;
 }
 
 .chat-container {
@@ -1261,10 +1400,10 @@ export default {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
   text-align: left;
   margin: 0;
 }
@@ -1290,74 +1429,107 @@ export default {
 }
 
 .message {
-  padding: 12px;
+  padding: 8px 12px;
   border-radius: 8px;
-  width: calc(100% - 24px); /* Full width minus padding */
+  width: calc(100% - 24px);
   box-sizing: border-box;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .message.user {
-  background: #007bff;
+  background: #1565c0; /* Darker blue */
   color: white;
   align-self: flex-end;
-  max-width: 75%;
+  max-width: 85%;
+  border-radius: 18px 18px 4px 18px;
 }
 
 .message.bot {
-  background: #e9ecef;
-  color: #212529;
+  background: #f0f2f5; /* Slightly darker background */
+  color: #1a1a1a;
   align-self: flex-start;
-  width: 100%; /* Force full width for bot messages */
-  max-width: 100%; /* Override max-width */
+  width: 100%;
+  max-width: 100%;
+  border-radius: 18px 18px 18px 4px;
+  border: 1px solid #dde1e6;
 }
 
-.chat-input {
-  display: flex;
-  gap: 8px;
+.chat-input-container {
   padding: 12px;
-  background: #f5f5f5;
-  border-top: 1px solid #e0e0e0;
+  background: #ffffff;
+  border-top: 1px solid #e0e4e8;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
 }
 
-.chat-input button {
-  padding: 8px 16px;
-  background-color: #000000;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  min-width: 80px;
+.input-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
 }
 
-.chat-input button:hover:not(:disabled) {
-  background-color: #333333;
-  transform: translateY(-1px);
+.controls-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
 }
 
-.chat-input button:disabled {
-  background-color: #cccccc;
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-.message-input {
+textarea {
   flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  resize: none;
-  font-family: inherit;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  resize: vertical;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
-.message-input:focus {
-  outline: none;
-  border-color: #000000;
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+.send-button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: #1565c0; /* Match usermessage color */
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.send-button:hover:not(:disabled) {
+  background: #0d47a1;
+}
+
+.send-button:disabled {
+  background: #ccc;
+}
+
+.toggle-switch {
+  width: 40px; /* Slightly smaller */
+  height: 22px; /* Slightly smaller */
+}
+
+.slider {
+  background-color: #e0e0e0;
+}
+
+.toggle-switch input:checked + .slider {
+  background-color: #1565c0; /* Match theme */
+}
+
+.debug-label {
+  font-size: 9px; /* Smaller text */
+  color: #666;
+  margin-top: 1px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .file-upload {
@@ -1584,7 +1756,7 @@ export default {
   background: white;
   border-radius: 4px;
   box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-  width: calc(100% - 16px); /* Account for padding */
+  width: calc(100% - 16px);
   max-width: 100%;
   box-sizing: border-box;
 }
@@ -1900,19 +2072,21 @@ export default {
 }
 
 .code-header {
-  padding: 8px 12px;
-  background: #21252b;
-  color: #abb2bf;
-  font-size: 0.9em;
-  border-bottom: 1px solid #181a1f;
+  padding: 8px;
+  background: #f5f5f5;
+  cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  cursor: pointer;
+}
+
+.code-label {
+  font-weight: 500;
+  color: #333;
 }
 
 .toggle-icon {
-  transition: transform 0.3s ease;
+  transition: transform 0.2s ease;
 }
 
 .toggle-icon.expanded {
@@ -2051,8 +2225,15 @@ export default {
   display: flex;
   gap: 8px;
   padding: 8px;
-  background: #f5f5f5;
-  border-bottom: 1px solid #ddd;
+  background: #e2e3e5; /* Darker background */
+  border-bottom: 2px solid #6e757c;
+}
+
+/* Improve button contrast */
+.toolbar-btn:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .grid-component {
@@ -2113,9 +2294,85 @@ export default {
   padding: 16px;
   border-top: 1px solid #e0e0e0;
   display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: flex-start;
-  margin: 0;
+}
+
+.input-wrapper {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.debug-controls {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+.toggle-switch input:checked + .slider {
+  background-color: #0078d4;
+}
+
+.toggle-switch input:checked + .slider:before {
+  transform: translateX(26px);
+}
+
+.toggle-switch input:checked + .slider i {
+  color: white;
+}
+
+.slider i {
+  color: #666;
+  font-size: 12px;
+  transition: .4s;
+}
+
+.debug-label {
+  margin-left: 8px;
+  font-size: 10px;
+  color: #666;
 }
 
 .chat-input-container textarea {
@@ -2216,5 +2473,150 @@ export default {
 
 .toggle-icon.expanded {
   transform: rotate(180deg);
+}
+
+.debug-toggle {
+  padding: 12px;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.debug-toggle.active {
+  background: #0078d4;
+}
+
+.chat-controls {
+  display: flex;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+.chat-input-container {
+  display: flex;
+  padding: 16px;
+  border-top: 1px solid #ddd;
+  background: white;
+  align-items: flex-start;
+  margin: 0;
+}
+
+.debug-toggle {
+  padding: 12px;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.debug-toggle.active {
+  background: #0078d4;
+}
+
+.debug-toggle-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.debug-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+
+.debug-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.input-wrapper {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.debug-controls {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+}
+
+.debug-label {
+  font-size: 10px;
+  color: #666;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #333;
+  transition: .4s;
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slider i {
+  color: #666;
+  transition: .4s;
+}
+
+.debug-switch input:checked + .slider {
+  background-color: #0078d4;
+}
+
+.debug-switch input:checked + .slider i {
+  color: #fff;
+}
+
+.debug-switch input:focus + .slider {
+  box-shadow: 0 0 0 2px #0078d4;
+}
+
+.debug-switch input:checked + .slider {
+  background-color: #0078d4;
+}
+
+.debug-switch input:checked + .slider i {
+  color: #fff;
+}
+
+.debug-switch input:focus + .slider {
+  box-shadow: 0 0 0 2px #0078d4;
+}
+
+.debug-label {
+  font-weight: 500;
+  color: #333;
+}
+
+.input-row {
+  display: flex;
+  width: 100%;
+  gap: 8px;
+}
+
+.debug-toggle-wrapper {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  gap: 8px;
 }
 </style>

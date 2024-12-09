@@ -215,8 +215,8 @@ Return the response in this format:
         const plotPrompt = `Create a ${suggestion.plotType} visualization for the data.
 The plot should be clear, informative, and properly labeled. The data should be correctly transformed for visual representation.
 The axis should not just dole out the numbers, but they should be appropriately scaled and maintain the aspect ratio for visual clarity.
-Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data. Return the plot as a base64 encoded PNG image.
-For the dapa plot the: ${suggestion.description}
+Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data.
+For the data plot the: ${suggestion.description}
 
 Use the following sample data (4 random rows):
 ${JSON.stringify(plotSampleRows, null, 2)}`;
@@ -253,24 +253,40 @@ ${JSON.stringify(plotSampleRows, null, 2)}`;
 
   async executePythonCode(pythonCode, data) {
     const tempDir = path.join(__dirname, 'temp');
+    const plotsDir = path.join(__dirname, 'plots'); // Add plots directory
     const scriptPath = path.join(tempDir, `script_${Date.now()}.py`);
     const tempDataPath = path.join(tempDir, `data_${Date.now()}.json`);
+    const plotPath = path.join(plotsDir, `plot_${Date.now()}.html`);
     let processedData = '';
     let errorData = '';
 
     try {
+      // Ensure directories exist
+      await fs.mkdir(tempDir, { recursive: true });
+      await fs.mkdir(plotsDir, { recursive: true });
+
+      console.log('Executing Python script:', {
+        scriptPath,
+        dataPath: tempDataPath,
+        plotPath,
+        dataSize: JSON.stringify(data).length
+      });
+
       // Write the data to a temporary JSON file
       await fs.writeFile(tempDataPath, JSON.stringify(data), 'utf8');
 
-      // Modify Python code to read from file
+      // Modify Python code to use specific plot path
       pythonCode = pythonCode.replace(
+        "plot_path = 'plot.html'",
+        `plot_path = '${plotPath.replace(/\\/g, '\\\\')}'`
+      ).replace(
         'input_data = json.loads(sys.argv[1])',
         `with open("${tempDataPath.replace(/\\/g, '\\\\')}", 'r', encoding='utf-8') as f:
             input_data = json.load(f)`
       );
 
       // Write the Python code to a temporary file
-      await fs.writeFile(scriptPath, pythonCode);
+      await fs.writeFile(scriptPath, pythonCode, 'utf8');
 
       // Execute Python script with proper error handling
       const pythonProcess = spawn('python', [scriptPath]);

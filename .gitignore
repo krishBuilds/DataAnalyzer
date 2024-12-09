@@ -4,7 +4,7 @@ client/cnpm-debug.log
 client/yarn-debug.log
 client/yarn-error.log
 client/pnpm-debug.log
-
+client/.vscode/chrome-debug-profile
 server/node_modules/
 server/cnpm-debug.log
 server/yarn-debug.log

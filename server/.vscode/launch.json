@@ -26,6 +26,21 @@
             "restart": true,
             "runtimeExecutable": "nodemon",
             "runtimeArgs": ["--inspect"]
+        },
+        {
+            "name": "Python Debug",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/src/temp",
+                    "remoteRoot": "."
+                }
+            ]
         }
     ]
 }
