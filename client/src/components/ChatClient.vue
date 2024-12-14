@@ -794,7 +794,7 @@ export default {
               data: {
                 error: {
                   message: error.response.data.error.message || error.response.data.error,
-                  pythonError: error.response.data.error.pythonError,
+                  //pythonError: error.response.data.error.pythonError,
                   code: error.response.data.error.code
                 }
               }
@@ -858,7 +858,7 @@ export default {
         text: 'An error occurred:',
         error: {
           message: error.response?.data?.error?.message || error.response?.data?.error || error.message,
-          pythonError: error.response?.data?.error?.pythonError,
+          //pythonError: error.response?.data?.error?.pythonError,
           code: error.response?.data?.error?.code
         }
       };
@@ -1171,8 +1171,8 @@ export default {
 <style scoped>
 .data-container {
   display: flex;
-  height: calc(100vh - 56px);
-  width: 100vw;
+  height: 93%;
+  width: 99%;
   overflow: hidden;
   position: relative;
 }
@@ -1274,7 +1274,7 @@ export default {
   background: #f8f9fa;
   border-bottom: 1px solid #ddd;
   gap: 24px;
-  height:30px
+  height:48px
 }
 
 .toolbar-left {
@@ -1308,6 +1308,7 @@ export default {
   align-items: center;
   gap: 12px;
   margin-left: auto;
+  margin-right: 10px;
 }
 
 .toolbar-btn, 
@@ -1347,11 +1348,6 @@ export default {
   border-color: #e0e0e0;
 }
 
-.file-upload {
-  order: -1;
-  margin-right: 100px;
-}
-
 .upload-row {
   display: flex;
   align-items: center;
@@ -1359,7 +1355,6 @@ export default {
 
 /* Style file input */
 .file-upload input[type="file"] {
-  padding: 4px;
   border: 1px solid #e0e0e0;
   border-radius: 6px;
   background: white;
