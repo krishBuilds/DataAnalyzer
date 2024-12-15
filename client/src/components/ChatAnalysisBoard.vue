@@ -37,14 +37,37 @@ export default {
   data() {
     return {
       userInput: '',
-      isTransitioning: false,
-      uploadedFile: null
+      fileData: null,
+      fileName: '',
+      uploadedFile: null,
+      isTransitioning: false
     }
   },
   methods: {
+    async handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      this.fileName = file.name;
+      
+      try {
+        const fileData = await this.readFile(file);
+        this.fileData = fileData;
+        this.uploadedFile = {
+          name: file.name,
+          type: file.type,
+          data: fileData
+        };
+        
+        // Emit both events with the same data structure
+        this.$emit('file-uploaded', this.uploadedFile);
+      } catch (error) {
+        console.error('Error reading file:', error);
+      }
+    },
+
     startAnalysis() {
-      console.log("Starting analysis with input:", this.userInput);
-      if (this.userInput.trim()) {
+      if (this.userInput.trim() || this.uploadedFile) {
         this.isTransitioning = true;
         this.$emit('start-analysis', {
           query: this.userInput,
@@ -52,14 +75,52 @@ export default {
         });
       }
     },
-    handleFileUpload(event) {
-      const file = event.target.files[0];
-      if (file) {
-        this.uploadedFile = file;
-      }
+    
+    readFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        
+        reader.onload = (e) => {
+          try {
+            let data;
+            if (file.type === 'application/json') {
+              data = JSON.parse(e.target.result);
+            } else if (file.type === 'text/csv') {
+              data = this.parseCSV(e.target.result);
+            } else {
+              // Add other file type handling as needed
+              data = e.target.result;
+            }
+            resolve(data);
+          } catch (error) {
+            reject(error);
+          }
+        };
+        
+        reader.onerror = (error) => reject(error);
+        
+        if (file.type === 'application/json' || file.type === 'text/csv') {
+          reader.readAsText(file);
+        } else {
+          reader.readAsArrayBuffer(file);
+        }
+      });
+    },
+    
+    parseCSV(csvText) {
+      // Basic CSV parsing - you might want to use a library like Papa Parse
+      const lines = csvText.split('\n');
+      const headers = lines[0].split(',').map(h => h.trim());
+      return lines.slice(1).map(line => {
+        const values = line.split(',');
+        return headers.reduce((obj, header, index) => {
+          obj[header] = values[index]?.trim();
+          return obj;
+        }, {});
+      });
     },
     removeFile() {
-      this.uploadedFile = null;
+      this.fileData = null;
     }
   }
 }

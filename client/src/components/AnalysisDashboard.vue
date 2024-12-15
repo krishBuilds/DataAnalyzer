@@ -1,22 +1,27 @@
 <template>
   <v-app>
     <div class="dashboard" :class="{ 'fade-in': mounted }">
-      <!-- Dashboard Grid -->
       <v-container fluid>
         <v-row>
           <!-- Plots Section -->
           <v-col cols="12" md="8">
             <v-row>
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="6" v-if="plots[0]">
                 <v-card class="plot-card">
                   <v-card-title>Analysis Plot 1</v-card-title>
-                  <div ref="plot1" class="plot-container"></div>
+                  <div class="plot-container" ref="plot1Container"></div>
+                  <v-card-text class="plot-description">
+                    {{ plots[0].description }}
+                  </v-card-text>
                 </v-card>
               </v-col>
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="6" v-if="plots[1]">
                 <v-card class="plot-card">
                   <v-card-title>Analysis Plot 2</v-card-title>
-                  <div ref="plot2" class="plot-container"></div>
+                  <div class="plot-container" ref="plot2Container"></div>
+                  <v-card-text class="plot-description">
+                    {{ plots[1].description }}
+                  </v-card-text>
                 </v-card>
               </v-col>
             </v-row>
@@ -28,7 +33,19 @@
               <v-card-title>Analysis Results</v-card-title>
               <v-card-text>
                 <div class="results-content">
-                  <!-- Analysis results will go here -->
+                  <div v-if="isLoading" class="loading-indicator">
+                    <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                    <p>Generating analysis...</p>
+                  </div>
+                  <div v-else-if="error" class="error-message">
+                    {{ error }}
+                  </div>
+                  <div v-else>
+                    <div v-for="(plot, index) in plots" :key="index" class="analysis-item">
+                      <h3>Plot {{ index + 1 }}</h3>
+                      <p>{{ plot.description }}</p>
+                    </div>
+                  </div>
                 </div>
               </v-card-text>
             </v-card>
@@ -75,14 +92,15 @@
 </template>
 
 <script>
-import Plotly from 'plotly.js-dist'; // Import Plotly
+import axios from 'axios';
+//import DOMPurify from 'dompurify';
 
 export default {
   name: 'AnalysisDashboard',
   props: {
     initialQuery: {
       type: String,
-      required: true
+      default: ''
     },
     uploadedFile: {
       type: Object,
@@ -92,16 +110,39 @@ export default {
   data() {
     return {
       mounted: false,
+      fileData: null,
+      fileType: null,
       userInput: '',
       isChatExpanded: false,
       messages: [],
+      plots: [],
+      isLoading: false,
+      error: null
+    }
+  },
+  watch: {
+    uploadedFile: {
+      immediate: true,
+      handler(newFile) {
+        if (newFile) {
+          this.handleFileData(newFile);
+        }
+      }
+    },
+    plots: {
+      immediate: true,
+      deep: true,
+      handler(newPlots) {
+        this.$nextTick(() => {
+          this.renderPlots(newPlots);
+        });
+      }
     }
   },
   mounted() {
     setTimeout(() => {
       this.mounted = true;
-      this.initializePlots();
-      // Add initial query as first message
+      this.generatePlots();
       if (this.initialQuery) {
         this.messages.push({
           type: 'user',
@@ -111,6 +152,61 @@ export default {
     }, 100);
   },
   methods: {
+    handleFileData(fileInfo) {
+      if (!fileInfo || !fileInfo.data) {
+        console.error('Invalid file data received:', fileInfo);
+        this.error = 'Invalid file data received';
+        return;
+      }
+
+      this.fileData = fileInfo.data;
+      this.fileType = fileInfo.type;
+      console.log('Received file data:', {
+        type: this.fileType,
+        dataLength: Array.isArray(this.fileData) ? this.fileData.length : 'not array',
+        sample: this.fileData.slice?.(0, 2)
+      });
+      this.generatePlots();
+    },
+    
+    sanitizeHtml(html) {
+      return html;
+    },
+    
+    async generatePlots() {
+      if (!this.fileData) {
+        this.error = 'No file data available';
+        return;
+      }
+
+      this.isLoading = true;
+      this.error = null;
+
+      try {
+        const response = await axios.post('/api/dashboard/generate-plots', {
+          data: this.fileData,
+          headers: Object.keys(this.fileData[0] || {}),
+          fileType: this.fileType
+        });
+
+        console.log('Plot response:', response.data); // Debug log
+
+        if (!response.data.success) {
+          throw new Error(response.data.error || 'Failed to generate plots');
+        }
+
+        this.plots = response.data.plots.map(plot => ({
+          plot_html: plot.plot_html,
+          description: plot.description
+        }));
+
+      } catch (error) {
+        console.error('Error generating plots:', error);
+        this.error = error.response?.data?.error || error.message;
+      } finally {
+        this.isLoading = false;
+      }
+    },
     toggleChat() {
       this.isChatExpanded = !this.isChatExpanded;
     },
@@ -130,23 +226,33 @@ export default {
         this.userInput = '';
       }
     },
-    initializePlots() {
-      // Initialize Plotly plots
-      const trace1 = {
-        x: [1, 2, 3, 4],
-        y: [10, 15, 13, 17],
-        type: 'scatter'
-      };
-      
-      const trace2 = {
-        values: [19, 26, 55],
-        labels: ['A', 'B', 'C'],
-        type: 'pie'
-      };
+    renderPlots(plots) {
+      plots.forEach((plot, index) => {
+        const containerRef = `plot${index + 1}Container`;
+        const container = this.$refs[containerRef];
+        
+        if (container && plot.plot_html) {
+          // Clear previous content
+          container.innerHTML = '';
+          
+          // Create and configure iframe
+          const iframe = document.createElement('iframe');
+          iframe.style.width = '100%';
+          iframe.style.height = '100%';
+          iframe.style.border = 'none';
+          container.appendChild(iframe);
+          
+          // Write plot HTML to iframe
+          const iframeDoc = iframe.contentWindow.document;
+          iframeDoc.open();
+          iframeDoc.write(plot.plot_html);
+          iframeDoc.close();
 
-      Plotly.newPlot(this.$refs.plot1, [trace1]);
-      Plotly.newPlot(this.$refs.plot2, [trace2]);
-    }
+          // Log for debugging
+          console.log(`Rendered plot ${index + 1}, HTML length:`, plot.plot_html.length);
+        }
+      });
+    },
   }
 }
 </script>
@@ -172,8 +278,17 @@ export default {
 }
 
 .plot-container {
-  height: 300px;
-  padding: 16px;
+  width: 100%;
+  height: 400px;
+  overflow: hidden;
+  position: relative;
+  background: white;
+}
+
+.plot-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
 }
 
 .chat-overlay {
@@ -255,5 +370,34 @@ export default {
 
 .send-btn {
   margin-left: 8px;
+}
+
+.plot-description {
+  font-size: 0.9em;
+  color: #cccccc;
+  padding: 8px 16px;
+}
+
+.loading-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.error-message {
+  color: #ff5252;
+  padding: 16px;
+  text-align: center;
+}
+
+.analysis-item {
+  margin-bottom: 20px;
+  padding: 12px;
+  border-bottom: 1px solid #333;
+}
+
+.analysis-item:last-child {
+  border-bottom: none;
 }
 </style> 

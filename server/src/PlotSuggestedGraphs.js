@@ -318,6 +318,10 @@ ${JSON.stringify(plotSampleRows, null, 2)}`;
           throw new Error(result.error);
         }
 
+        // Add debug logging for HTML content
+        console.log('Plot HTML length:', result.plot_html?.length);
+        console.log('Plot HTML preview:', result.plot_html?.substring(0, 200));
+
         return result.plot_html;
       } catch (parseError) {
         throw new Error(`Failed to parse Python output: ${parseError.message}`);

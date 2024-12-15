@@ -29,11 +29,13 @@
         <ChatAnalysisBoard 
           v-if="currentPage === 'analysis-board' && !showAnalysisDashboard"
           @start-analysis="handleAnalysisStart"
+          @file-uploaded="handleFileUpload"
         />
         <AnalysisDashboard 
           v-if="currentPage === 'analysis-board' && showAnalysisDashboard"
           :initialQuery="analysisQuery"
           :uploadedFile="analysisFile"
+          ref="dashboard"
         />
         <DataTable v-if="currentPage === 'data-table'" />
       </div>
@@ -66,6 +68,17 @@ export default {
       this.analysisQuery = data.query;
       this.analysisFile = data.file;
       this.showAnalysisDashboard = true;
+    },
+    
+    handleFileUpload(fileInfo) {
+      // Only handle file upload if dashboard is visible
+      if (this.showAnalysisDashboard && this.$refs.dashboard) {
+        this.$refs.dashboard.handleFileData(fileInfo);
+      } else {
+        // Store file info for when dashboard becomes visible
+        this.analysisFile = fileInfo;
+        this.showAnalysisDashboard = true;
+      }
     }
   }
 }

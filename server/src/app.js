@@ -16,6 +16,7 @@ const PlotSuggestor = require('./PlotSuggestedGraphs');
 const DataCleaningRequest = require('./DataCleaningRequest');
 const PythonDebugger = require('./PythonDebugger');
 const PythonExecutor = require('./PythonExecutor');
+const dashboardRouter = require('./dashboardRouter');
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -710,3 +711,7 @@ app.post('/api/debug/stop', (req, res) => {
   pyDebugger.stop();
   res.json({ success: true });
 });
+
+// Mount the dashboard router with a specific prefix
+app.use('/api/dashboard', dashboardRouter);
+module.exports = app;
