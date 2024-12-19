@@ -1,48 +1,59 @@
 <template>
-        <div class="excel-toolbar">
-        <div class="toolbar-left">
-          <button @click="undo" :disabled="!canUndo" class="toolbar-btn">
-            <i class="fas fa-undo"></i>
-          </button>
-          <button @click="redo" :disabled="!canRedo" class="toolbar-btn">
-            <i class="fas fa-redo"></i>
-          </button>
-        </div>
-        
-        <div class="toolbar-center">
-          <button @click="cleanData" :disabled="!gridOperations.getData().length || loading" class="primary">
-            <i class="fas fa-broom"></i>
-            Clean Data
-          </button>
-          <button @click="suggestPlots" :disabled="!gridOperations.getData().length || loading" class="primary">
-            <i class="fas fa-chart-line"></i>
-            Suggest Plots
-          </button>
-        </div>
+  <div class="excel-toolbar">
+    <!-- File Upload group (New) -->
+    <div class="toolbar-group">
+      <input 
+        type="file" 
+        @change="handleFileUpload" 
+        accept=".csv,.xlsx,.xls"
+        ref="fileInput"
+        class="file-input"
+        id="file-upload"
+      >
+      <label for="file-upload" class="toolbar-btn">
+        <i class="fas fa-file-upload"></i>
+        <span>Choose File</span>
+      </label>
+    </div>
 
-        <div class="toolbar-right">
-          <button @click="exportData('csv')" :disabled="!gridOperations.getData().length">
-            <i class="fas fa-file-csv"></i>
-            Export CSV
-          </button>
-          <button @click="exportData('xlsx')" :disabled="!gridOperations.getData().length">
-            <i class="fas fa-file-excel"></i>
-            Export XLSX
-          </button>
-        </div>
+    <!-- Left group: Undo/Redo -->
+    <div class="toolbar-group">
+      <button @click="undo" :disabled="!canUndo" class="toolbar-btn" title="Undo">
+        <i class="fas fa-undo"></i>
+      </button>
+      <button @click="redo" :disabled="!canRedo" class="toolbar-btn" title="Redo">
+        <i class="fas fa-redo"></i>
+      </button>
+    </div>
 
-        <!-- Move file upload here -->
-        <div class="file-upload">
-          <div class="upload-row">
-            <input 
-              type="file" 
-              @change="handleFileUpload" 
-              accept=".csv,.xlsx,.xls"
-              ref="fileInput"
-            >
-          </div>
-        </div>
+    <!-- Center group: Data Operations -->
+    <div class="toolbar-group">
+      <button @click="cleanData" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn primary">
+        <i class="fas fa-broom"></i>
+        <span>Clean Data</span>
+      </button>
+      <button @click="suggestPlots" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn primary">
+        <i class="fas fa-chart-line"></i>
+        <span>Suggest Plots</span>
+      </button>
+    </div>
+
+    <!-- Right group: Export -->
+    <div class="toolbar-group">
+      <div class="file-name" v-if="fileName">
+        <i class="fas fa-file"></i>
+        <span>{{ fileName }}</span>
       </div>
+      <button @click="exportData('csv')" :disabled="!gridOperations.getData().length" class="toolbar-btn">
+        <i class="fas fa-file-csv"></i>
+        <span>Export CSV</span>
+      </button>
+      <button @click="exportData('xlsx')" :disabled="!gridOperations.getData().length" class="toolbar-btn">
+        <i class="fas fa-file-excel"></i>
+        <span>Export XLSX</span>
+      </button>
+    </div>
+  </div>
 
   <div class="data-container">
     <!-- Comment out header row for now -->
@@ -1170,30 +1181,75 @@ export default {
 
 <style scoped>
 .data-container {
-  display: flex;
-  height: 93%;
-  width: 99%;
-  overflow: hidden;
-  position: relative;
-}
-
-.table-section {
-  flex: 1;
-  min-width: 200px;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-section {
-  position: relative;
-  height: 100%;
-  border-left: 1px solid #ddd;
-  display: flex;
-  flex-direction: column;
   background: white;
-  overflow: hidden;
+  height: calc(100vh - 56px); /* Adjust for toolbar height */
+  display: flex;
+  position: relative;
+}
+
+.excel-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+  height: 56px;
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: 16px; /* Add spacing between groups */
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: #f8f9fa;
+  border-color: #ccc;
+}
+
+.toolbar-btn.primary {
+  background: #007bff;
+  color: white;
+  border-color: #0056b3;
+}
+
+.toolbar-btn.primary:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.file-input {
+  display: none;
+}
+
+/* Fix text input color */
+.chat-input-container textarea {
+  color: #333;
+  background: white;
+}
+
+/* Remove unnecessary scrollbar */
+#app {
+  overflow-y: hidden;
+}
+
+.scrollable-content {
+  overflow-y: auto;
+  height: 100%;
 }
 
 .resizer {
@@ -1390,6 +1446,8 @@ export default {
   margin: 0;
   padding: 15px;
   border-bottom: 1px solid #ddd;
+  color: #000000;
+  font-weight: 600;
 }
 
 .chat-messages {
@@ -1440,13 +1498,13 @@ export default {
 }
 
 .message.bot {
-  background: #f0f2f5; /* Slightly darker background */
-  color: #1a1a1a;
+  background: #ffffff;
+  color: #000000;
   align-self: flex-start;
   width: 100%;
   max-width: 100%;
   border-radius: 18px 18px 18px 4px;
-  border: 1px solid #dde1e6;
+  border: 1px solid #e0e0e0;
 }
 
 .chat-input-container {
@@ -2613,5 +2671,23 @@ textarea {
   justify-content: flex-end;
   width: 100%;
   gap: 8px;
+}
+
+/* Add these new styles */
+.file-input {
+  display: none;  /* Hide the actual file input */
+}
+
+label.toolbar-btn {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Update existing toolbar-group style */
+.toolbar-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: 16px; /* Add spacing between groups */
 }
 </style>

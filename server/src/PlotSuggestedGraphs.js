@@ -158,15 +158,17 @@ ${JSON.stringify(formattedSamples, null, 2)}
 
 Note: Your code will receive the ENTIRE dataset (${data.length} rows) as input, not just this sample.
 
-Suggest 3 different meaningful visualizations that would provide insights about this data.
+Suggest 5 different meaningful visualizations that would provide insights about this data to the user.
 For each visualization:
-1. Explain why it would be useful
-2. What insights it might reveal
-3. Which columns it would use
+1. Focus on revealing patterns, trends, correlations, or distributions
+2. Consider combining relevant variables to show multi-dimensional relationships
+3. Prioritize visualizations that tell a story about the data
+4. Include statistical insights where relevant (e.g., trend lines, averages, distributions)
+5. Ensure the visualization adds unique value not covered by other plots
 
 Return the response in this format:
-1. [Plot Type]: [Brief Description]
-2. [Plot Type]: [Brief Description]
+1. [Plot Type]: [Detailed insight-focused description]
+2. [Plot Type]: [Detailed insight-focused description]
 ...etc`;
 
     try {
@@ -195,7 +197,7 @@ Return the response in this format:
           description: description.trim()
         };
       });
-    return suggestions.slice(0, 3); // Ensure we only get 5 suggestions
+    return suggestions.slice(0, 5); // Changed from 3 to 5
   }
 
   async generatePlots(suggestions, data) {

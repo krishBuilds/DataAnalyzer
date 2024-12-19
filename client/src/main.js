@@ -11,9 +11,8 @@ import { aliases, mdi } from 'vuetify/iconsets/mdi'
 import '@mdi/font/css/materialdesignicons.css'
 
 // Configure axios defaults
-axios.defaults.baseURL = process.env.NODE_ENV === 'production' 
-  ? 'http://localhost:3000' 
-  : process.env.VUE_APP_API_URL || 'http://localhost:3000'
+axios.defaults.baseURL = process.env.VUE_APP_API_URL || 'http://localhost:3000'
+axios.defaults.headers.common['Content-Type'] = 'application/json'
 
 const vuetify = createVuetify({
   components,

@@ -667,7 +667,7 @@ Suggest a clear, professional title for this dataset that describes its content.
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       temperature: 0.3,
       max_tokens: 60
     });

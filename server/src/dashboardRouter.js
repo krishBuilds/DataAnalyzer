@@ -99,4 +99,62 @@ router.post('/generate-plots', async (req, res) => {
   }
 });
 
+router.post('/describe-data', async (req, res) => {
+  const { data, headers } = req.body;
+  
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Transfer-Encoding', 'chunked');
+
+  try {
+    const stream = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{
+        role: 'system',
+        content: 'You are a data analyst. Analyze the given dataset and provide detailed insights in a clear, structured format.'
+      }, {
+        role: 'user',
+        content: `Give a brief analysis of this dataset with headers: ${headers.join(', ')}. 
+                 First 5 rows: ${JSON.stringify(data.slice(0, 5))}
+                 Total rows: ${data.length}
+                 
+                 Provide a brief analysis of the data assuming user does not have any prior knowledge of the data.
+                 1. Short summary on what data represents
+                 2. Small overview of the data`
+      }],
+      stream: true,
+      max_tokens: 250
+    });
+
+    let buffer = '';
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        buffer += content;
+        // Send complete sentences or paragraphs
+        if (content.includes('.') || content.includes('\n')) {
+          const dataChunk = JSON.stringify({ content: buffer }) + '\n';
+          res.write(`data: ${dataChunk}\n`);
+          buffer = ''; // Clear buffer after sending
+          if (res.flush) res.flush();
+        }
+      }
+    }
+    
+    // Send any remaining content in buffer
+    if (buffer) {
+      const dataChunk = JSON.stringify({ content: buffer }) + '\n';
+      res.write(`data: ${dataChunk}\n`);
+    }
+    
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error) {
+    console.error('Error in data description:', error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
 module.exports = router;
