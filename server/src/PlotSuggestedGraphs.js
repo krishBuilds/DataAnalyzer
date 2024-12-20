@@ -35,7 +35,7 @@ def create_visualization(df):
         )
         
         # Save as HTML
-        plot_path = 'plot.html'
+        plot_path = 'src/plots/plot.html'
         fig.write_html(plot_path, full_html=True, include_plotlyjs=True)
         
         # Read the HTML content
@@ -140,9 +140,10 @@ class PlotSuggestor {
     this.openai = openai;
   }
 
-  async suggestPlots(data, headers) {
+  async suggestPlotTypes(data, headers) 
+  {
     // Get 2 random sample rows for suggestions
-    const sampleRows = getRandomSampleRows(data, [], 2);
+    const sampleRows = getRandomSampleRows(data, [], 20);
 
     // Format samples for the suggestion prompt
     const formattedSamples = sampleRows.map((row, idx) => ({
@@ -153,18 +154,19 @@ class PlotSuggestor {
     // Create the suggestion prompt
     const suggestionPrompt = `Given this table structure:
 Headers: ${JSON.stringify(headers)}
-Random sample of data (showing 2 of ${data.length} total rows):
+Random sample of data (showing 20 of ${data.length} total rows):
 ${JSON.stringify(formattedSamples, null, 2)}
 
 Note: Your code will receive the ENTIRE dataset (${data.length} rows) as input, not just this sample.
 
 Suggest 5 different meaningful visualizations that would provide insights about this data to the user.
 For each visualization:
-1. Focus on revealing patterns, trends, correlations, or distributions
-2. Consider combining relevant variables to show multi-dimensional relationships
+1. Focus on revealing patterns, trends, correlations, or distributions by understanding the input sample random dataset and understanding which would give good visulization here
+2. Focus on generating more relevant graphs that can be understood easily by user and avoid too much complexity to avoid information paralysis
 3. Prioritize visualizations that tell a story about the data
-4. Include statistical insights where relevant (e.g., trend lines, averages, distributions)
-5. Ensure the visualization adds unique value not covered by other plots
+4. Include statistical insights where it would b really relevant (e.g., trend lines, averages, distributions)
+5. Ensure the visualization adds unique value and properly spaced
+6. Try to avoid heatmaps in general though do suggest if really helpful for data visualization
 
 Return the response in this format:
 1. [Plot Type]: [Detailed insight-focused description]
@@ -179,8 +181,19 @@ Return the response in this format:
         ],
         model: "gpt-4o-mini",
       });
-
       const suggestions = this.parseSuggestions(completion.choices[0].message.content);
+      return suggestions;
+    }
+    catch (error) {
+      throw new Error(`Failed to generate plot suggestions: ${error.message}`);
+    }
+  }
+
+    
+  async suggestPlots(data, headers) {
+
+    try {
+      const suggestions = await this.suggestPlotTypes(data, headers)
       return await this.generatePlots(suggestions, data);
     } catch (error) {
       throw new Error(`Failed to generate plot suggestions: ${error.message}`);
@@ -210,17 +223,18 @@ Return the response in this format:
     // }
 
     // Get 4 random rows for plotting
-    const plotSampleRows = getRandomSampleRows(data, [], 4);
-
+    const plotSampleRows = getRandomSampleRows(data, [], 10);
+    let tries = 0;
     for (const suggestion of suggestions) {
       try {
+        
         const plotPrompt = `Create a ${suggestion.plotType} visualization for the data.
 The plot should be clear, informative, and properly labeled. The data should be correctly transformed for visual representation.
 The axis should not just dole out the numbers, but they should be appropriately scaled and maintain the aspect ratio for visual clarity.
 Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data.
 For the data plot the: ${suggestion.description}
 
-Use the following sample data (4 random rows):
+Use the following sample data (10 random rows):
 ${JSON.stringify(plotSampleRows, null, 2)}`;
 
         const completion = await this.openai.chat.completions.create({
@@ -245,6 +259,12 @@ ${JSON.stringify(plotSampleRows, null, 2)}`;
           code: pythonCode,
           filePath: plotFilePath // Include the file path in the results
         });
+        tries += 1;
+        
+        if (tries == 3)
+        {
+          return results;
+        }
       } catch (error) {
         console.error(`Error generating plot for ${suggestion.plotType}:`, error);
       }
@@ -341,6 +361,62 @@ ${JSON.stringify(plotSampleRows, null, 2)}`;
       }
     }
   }
+
+  async *generatePlotsStream(data, suggestions) {
+    try {
+        // Get sample rows for suggestions
+        const sampleRows = getRandomSampleRows(data, [], 10);
+
+        let successfulPlotsCount = 0; // Counter for successful plots
+        const maxPlots = 5; // Maximum number of plots to send
+
+        // Generate plots one by one and yield them
+        for (const suggestion of suggestions) {
+            if (successfulPlotsCount >= maxPlots) {
+                break; // Stop if we've reached the maximum number of successful plots
+            }
+
+            try {
+                const plotPrompt = `Create a ${suggestion.plotType} visualization for the data.
+                The plot should be clear, informative, and properly labeled. The data should be correctly transformed for visual representation.
+                The axis should not just dole out the numbers, but they should be appropriately scaled and maintain the aspect ratio for visual clarity.
+                Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible but importantly keeping the visualization simplistic and not too complex and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data.
+                For the data plot the: ${suggestion.description}
+                
+                Use the following sample data (10 random rows):
+                ${JSON.stringify(sampleRows, null, 2)}`; // Get suggestions first
+
+                const completion = await this.openai.chat.completions.create({
+                    messages: [
+                        { role: "system", content: visualizationPrompt },
+                        { role: "user", content: plotPrompt }
+                    ],
+                    model: "gpt-4o-mini",
+                });
+
+                const pythonCode = completion.choices[0].message.content
+                    .replace(/```python\n|```\n|```/g, '')
+                    .trim();
+
+                const plot_html = await this.executePythonCode(pythonCode, data);
+
+                // Yield the successful plot
+                successfulPlotsCount++; // Increment the successful plot counter
+                yield {
+                    description: suggestion.description,
+                    plot_html: plot_html,
+                    code: pythonCode
+                };
+            } catch (error) {
+                console.error(`Error generating plot for ${suggestion.plotType}:`, error);
+                // Do not yield error plots
+            }
+        }
+    } catch (error) {
+        console.error('Error in plot generation stream:', error);
+        throw error;
+    }
+}
 }
 
 module.exports = PlotSuggestor; 

@@ -14,6 +14,10 @@
         <i class="fas fa-file-upload"></i>
         <span>Choose File</span>
       </label>
+      <div v-if="fileName" class="file-name-display">
+        <i class="fas fa-file"></i>
+        <span>{{ fileName }}</span>
+      </div>
     </div>
 
     <!-- Left group: Undo/Redo -->
@@ -28,11 +32,11 @@
 
     <!-- Center group: Data Operations -->
     <div class="toolbar-group">
-      <button @click="cleanData" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn primary">
+      <button @click="cleanData" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn">
         <i class="fas fa-broom"></i>
         <span>Clean Data</span>
       </button>
-      <button @click="suggestPlots" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn primary">
+      <button @click="suggestPlots" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn">
         <i class="fas fa-chart-line"></i>
         <span>Suggest Plots</span>
       </button>
@@ -323,6 +327,7 @@ export default {
       minChatWidth: 280,
       maxChatWidth: 800,
       debugMode: false,
+      fileName: '', // Ensure fileName is in data
     }
   },
   created() {
@@ -401,11 +406,40 @@ export default {
     window.addEventListener('mouseup', this.stopResize);
   },
   beforeUnmount() {
-    window.removeEventListener('keydown', this.handleKeyDown);
-    window.removeEventListener('keyup', this.handleKeyUp);
-    this.stopResize();
+    // Clear all event listeners
+    window.removeEventListener('resize', this.onResize);
     window.removeEventListener('mousemove', this.handleResize);
     window.removeEventListener('mouseup', this.stopResize);
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('keyup', this.handleKeyUp);
+
+    // Destroy Handsontable instance
+    if (this.$refs.hotTable?.hotInstance) {
+      this.$refs.hotTable.hotInstance.destroy();
+    }
+
+    // Clear large data objects
+    this.tableData = [];
+    this.chatMessages = [];
+    this.hotSettings.data = [];
+    
+    // // Clear grid operations
+    // if (this.gridOperations) {
+    //   this.gridOperations.clearData();
+    // }
+
+    // Clear any ongoing API requests
+    if (this.currentRequest) {
+      this.currentRequest.cancel();
+    }
+
+    // Reset all reactive properties
+    this.loading = false;
+    this.error = null;
+    this.userMessage = '';
+    this.selectedPlotHtml = null;
+    this.expandedCodes = {};
+    this.isDragging = false;
   },
   methods: {
     onResize() {
@@ -443,6 +477,7 @@ export default {
 
       this.loading = true;
       this.error = null;
+      this.fileName = file.name; // Set the filename
 
       try {
         const data = await this.readFile(file);
@@ -1174,6 +1209,15 @@ export default {
 
     toggleDebugMode() {
       this.debugMode = !this.debugMode;
+    },
+
+    clearData() {
+      // if (this.gridOperations) {
+      //   this.gridOperations.clearData();
+      // }
+      this.hotSettings.data = [];
+      this.tableData = [];
+      this.chatMessages = [];
     }
   }
 }
@@ -1182,9 +1226,10 @@ export default {
 <style scoped>
 .data-container {
   background: white;
-  height: calc(100vh - 56px); /* Adjust for toolbar height */
+  height: 100%;
   display: flex;
   position: relative;
+  overflow: hidden;
 }
 
 .excel-toolbar {
@@ -1201,7 +1246,6 @@ export default {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-right: 16px; /* Add spacing between groups */
 }
 
 .toolbar-btn {
@@ -1283,7 +1327,7 @@ export default {
   flex: 1;
   position: relative;
   border: 1px solid #ddd;
-  height: 100%;
+  height: calc(100% - 48px);
   overflow: hidden;
 }
 
@@ -1434,7 +1478,7 @@ export default {
   display: flex;
   flex: 1;
   flex-direction: column;
-  height: 100%;
+  height: calc(100% - 48px);
   border: 1px solid #ddd;
   text-align: left;
   overflow: hidden;
@@ -1459,6 +1503,25 @@ export default {
   gap: 5px;
   text-align: left;
   margin: 0;
+  margin-bottom: 15px;
+  
+  /* Add custom scrollbar for chat messages only */
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
 }
 
 .table-header-row {
@@ -1508,10 +1571,16 @@ export default {
 }
 
 .chat-input-container {
-  padding: 12px;
-  background: #ffffff;
-  border-top: 1px solid #e0e4e8;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+  position: sticky;
+  bottom: 0;
+  background: white;
+  padding: 16px;
+  padding-bottom: 12px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: auto;
 }
 
 .input-group {
@@ -2673,21 +2742,38 @@ textarea {
   gap: 8px;
 }
 
-/* Add these new styles */
-.file-input {
-  display: none;  /* Hide the actual file input */
-}
-
-label.toolbar-btn {
-  margin: 0;
-  cursor: pointer;
-}
-
-/* Update existing toolbar-group style */
-.toolbar-group {
+/* Add these styles */
+.file-name-display {
   display: flex;
-  gap: 8px;
   align-items: center;
-  margin-right: 16px; /* Add spacing between groups */
+  gap: 8px;
+  padding: 0 12px;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.toolbar-btn {
+  background: white;
+  border: 1px solid #ddd;
+  color: #333;
+  padding: 8px 16px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #ccc;
+}
+
+.toolbar-btn:disabled {
+  background: #f5f5f5;
+  border-color: #ddd;
+  color: #999;
+  cursor: not-allowed;
 }
 </style>

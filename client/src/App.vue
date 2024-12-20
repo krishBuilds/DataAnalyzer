@@ -80,6 +80,16 @@ export default {
         this.showAnalysisDashboard = true;
       }
     }
+  },
+  watch: {
+    currentPage(newPage) {
+      if (newPage === 'analysis-board') {
+        // Reset analysis dashboard state
+        this.showAnalysisDashboard = false;
+        this.analysisQuery = '';
+        this.analysisFile = null;
+      }
+    }
   }
 }
 </script>
@@ -102,20 +112,11 @@ html, body {
   overflow: hidden;
 }
 
-/* Hide all scrollbars */
-::-webkit-scrollbar {
-  display: none;
-}
-
-* {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
 .app-container {
   display: flex;
   height: 100%;
   width: 100%;
+  overflow: hidden;
 }
 
 .nav-pane {
@@ -169,5 +170,6 @@ html, body {
   flex: 1;
   height: 100%;
   overflow: hidden;
+  position: relative;
 }
 </style>

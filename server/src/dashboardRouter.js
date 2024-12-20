@@ -112,19 +112,17 @@ router.post('/describe-data', async (req, res) => {
       model: 'gpt-4o-mini',
       messages: [{
         role: 'system',
-        content: 'You are a data analyst. Analyze the given dataset and provide detailed insights in a clear, structured format.'
+        content: 'You are a data analyst. Analyze the given dataset and understand what the data represents. Give answer in structured markdown format. Initially give a short summary of the data'
       }, {
         role: 'user',
         content: `Give a brief analysis of this dataset with headers: ${headers.join(', ')}. 
                  First 5 rows: ${JSON.stringify(data.slice(0, 5))}
                  Total rows: ${data.length}
                  
-                 Provide a brief analysis of the data assuming user does not have any prior knowledge of the data.
-                 1. Short summary on what data represents
-                 2. Small overview of the data`
+                 Provide a brief analysis of the data assuming user does not have any prior knowledge of the data. Talk about units of data under different column and just try to give small overview of data.`
       }],
       stream: true,
-      max_tokens: 250
+      max_tokens: 500
     });
 
     let buffer = '';
@@ -153,6 +151,41 @@ router.post('/describe-data', async (req, res) => {
   } catch (error) {
     console.error('Error in data description:', error);
     res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+// Add new streaming endpoint
+router.post('/generate-plots-stream', async (req, res) => {
+  const { data, headers } = req.body;
+
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const suggestions = await plotSuggestor.suggestPlotTypes(data, headers);
+    const plotStream = plotSuggestor.generatePlotsStream(data, suggestions);
+
+    for await (const plot of plotStream) {
+      // Send each plot as it's generated
+      const eventData = JSON.stringify({
+        type: plot.error ? 'error' : 'plot',
+        data: plot
+      });
+      res.write(`data: ${eventData}\n\n`);
+      if (res.flush) res.flush();
+    }
+
+    res.write('data: {"type":"complete"}\n\n');
+    res.end();
+  } catch (error) {
+    console.error('Error in plot stream:', error);
+    res.write(`data: ${JSON.stringify({ 
+      type: 'error', 
+      error: error.message 
+    })}\n\n`);
     res.end();
   }
 });

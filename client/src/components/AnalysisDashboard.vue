@@ -1,6 +1,6 @@
 <template>
   <v-app>
-    <div class="dashboard scrollable-content" :class="{ 'fade-in': mounted }">
+    <div class="dashboard scrollable-content" :class="{ 'fade-in': mounted }" style="margin-left: 16px;">
       <v-container fluid>
         <v-row>
           <!-- Plots Section -->
@@ -10,19 +10,16 @@
                 <!-- First row: two plots side by side if available -->
                 <v-col 
                   :cols="12" 
-                  :md="index < 2 && plots.length > 1 ? 6 : 12"
+                  :md="6"
                   :class="{'mb-4': true}"
                 >
                   <v-card class="plot-card">
-                    <v-card-title>Analysis Plot {{ index + 1 }}</v-card-title>
+                    <v-card-title>Plot {{ index + 1 }}</v-card-title>
                     <div 
                       class="plot-container"
-                      :class="{'full-width': index >= 2 || plots.length === 1}"
                       :ref="`plot${index + 1}Container`"
                     ></div>
-                    <v-card-text class="plot-description">
-                      {{ plot.description }}
-                    </v-card-text>
+                    <v-card-text class="plot-description" v-html="renderMarkdown(plot.description)"></v-card-text>
                   </v-card>
                 </v-col>
               </template>
@@ -45,7 +42,7 @@
                   <div v-else>
                     <div v-for="(plot, index) in plots" :key="index" class="analysis-item">
                       <h3>Plot {{ index + 1 }}</h3>
-                      <p>{{ plot.description }}</p>
+                      <div v-html="renderMarkdown(plot.description)"></div>
                     </div>
                   </div>
                 </div>
@@ -69,8 +66,9 @@
         </v-row>
       </v-container>
 
+      <!-- Commented out chat overlay -->
       <!-- Perplexity-style Chat Overlay -->
-      <div class="chat-overlay" :class="{ 'chat-expanded': isChatExpanded }">
+      <!-- <div class="chat-overlay" :class="{ 'chat-expanded': isChatExpanded }">
         <div class="chat-header" @click="toggleChat">
           <v-icon>{{ isChatExpanded ? 'mdi-chevron-down' : 'mdi-chevron-up' }}</v-icon>
         </div>
@@ -90,14 +88,14 @@
             </template>
           </v-text-field>
         </div>
-      </div>
+      </div> -->
     </div>
   </v-app>
 </template>
 
 <script>
 import axios from 'axios';
-//import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 
 export default {
   name: 'AnalysisDashboard',
@@ -125,6 +123,7 @@ export default {
       dataDescription: '',
       isDescriptionLoading: false,
       descriptionEventSource: null,
+      descriptionDict: {}
     }
   },
   computed: {
@@ -146,7 +145,7 @@ export default {
       deep: true,
       handler(newPlots) {
         this.$nextTick(() => {
-          this.renderPlots(newPlots);
+          this.renderPlot(newPlots[newPlots.length - 1]);
         });
       }
     }
@@ -154,7 +153,7 @@ export default {
   mounted() {
     setTimeout(() => {
       this.mounted = true;
-      this.generatePlots();
+      this.generatePlotsStream();
       if (this.initialQuery) {
         this.messages.push({
           type: 'user',
@@ -176,11 +175,11 @@ export default {
       this.analyzeData();
     },
     
-    sanitizeHtml(html) {
-      return html;
+    renderMarkdown(markdown) {
+      return marked(markdown);
     },
-    
-    async generatePlots() {
+
+    async generatePlotsStream() {
       if (!this.fileData) {
         this.error = 'No file data available';
         return;
@@ -188,37 +187,101 @@ export default {
 
       this.isLoading = true;
       this.error = null;
-      this.plots = []; // Clear existing plots
+      this.plots = [];
 
       try {
-        const response = await axios.post('/api/dashboard/generate-plots', {
-          data: this.fileData,
-          headers: Object.keys(this.fileData[0] || {}),
-          fileType: this.fileType
+        const response = await axios({
+          method: 'post',
+          url: '/api/dashboard/generate-plots-stream',
+          data: {
+            data: this.fileData,
+            headers: Object.keys(this.fileData[0] || {}),
+          },
+          responseType: 'text',
+          onDownloadProgress: (progressEvent) => {
+            const text = progressEvent.event.target.responseText;
+            const lines = text.split('\n\n');
+            
+            lines.forEach(line => {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(5));
+                  
+                  switch (data.type) {
+                    case 'plot':
+                      // Check for error in the plot data
+                      if (data.data.error) {
+                        console.error('Error in plot data:', data.data.error);
+                        break;
+                      }
+
+                      // Check if description already exists
+                      if (this.descriptionDict[data.data.description]) {
+                        console.warn('Duplicate description found:', data.data.description);
+                        break;
+                      }
+
+                      // Add description to dictionary and push plot
+                      this.descriptionDict[data.data.description] = true;
+                      this.plots.push({
+                        plot_html: data.data.plot_html,
+                        description: data.data.description
+                      });
+                        this.renderPlot(this.plots[this.plots.length - 1]);
+                      break;
+                      
+                    case 'error':
+                      console.error('Error generating plot:', data.error);
+                      break;
+                    
+                    case 'complete':
+                      this.isLoading = false;
+                      break;
+                  }
+                } catch (e) {
+                  console.debug('Skipping invalid JSON line:', e);
+                }
+              }
+            });
+          }
         });
 
-        if (!response.data.success) {
-          throw new Error(response.data.error || 'Failed to generate plots');
+        if (response.status !== 200) {
+          throw new Error('Failed to generate plots');
         }
-
-        // Ensure all plots are processed
-        this.plots = response.data.plots.map(plot => ({
-          plot_html: plot.plot_html,
-          description: plot.description
-        }));
-
-        // Render plots after they're loaded
-        this.$nextTick(() => {
-          this.renderPlots(this.plots);
-        });
-
       } catch (error) {
-        console.error('Error generating plots:', error);
-        this.error = error.response?.data?.error || error.message;
+        console.error('Error in plot stream:', error);
+        this.error = error.message;
       } finally {
         this.isLoading = false;
       }
     },
+
+    renderPlot(plot) {
+
+      const containerRef = `plot${this.plots.length}Container`;
+      const containers = this.$refs[containerRef];
+      const container = containers ? containers[0] : null;
+      
+      if (container) {
+        // Clear previous content
+        container.innerHTML = '';
+        
+        // Create and configure iframe
+        const iframe = document.createElement('iframe');
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.border = 'none';
+        container.appendChild(iframe);
+        
+        // Write plot HTML to iframe
+        const iframeDoc = iframe.contentWindow.document;
+        iframeDoc.open();
+        iframeDoc.write(plot.plot_html);
+        iframeDoc.close();
+      }
+    },
+
     toggleChat() {
       this.isChatExpanded = !this.isChatExpanded;
     },
@@ -238,31 +301,6 @@ export default {
         this.userInput = '';
       }
     },
-    renderPlots(plots) {
-      plots.forEach((plot, index) => {
-        const containerRef = `plot${index + 1}Container`;
-        const containers = this.$refs[containerRef];
-        const container = containers ? containers[0] : null;
-        
-        if (container && plot.plot_html) {
-          // Clear previous content
-          container.innerHTML = '';
-          
-          // Create and configure iframe
-          const iframe = document.createElement('iframe');
-          iframe.style.width = '100%';
-          iframe.style.height = '100%';
-          iframe.style.border = 'none';
-          container.appendChild(iframe);
-          
-          // Write plot HTML to iframe
-          const iframeDoc = iframe.contentWindow.document;
-          iframeDoc.open();
-          iframeDoc.write(plot.plot_html);
-          iframeDoc.close();
-        }
-      });
-    },
     async analyzeData() {
       this.isLoading = true;
       this.isDescriptionLoading = true;
@@ -272,7 +310,7 @@ export default {
       try {
         // Start both processes in parallel
         await Promise.all([
-          this.generatePlots(),
+          this.generatePlotsStream(),
           this.startDescriptionStream()
         ]);
       } catch (error) {
@@ -304,7 +342,7 @@ export default {
                   if (line.includes('[DONE]')) return;
                   const data = JSON.parse(line.slice(5));
                   if (data.content) {
-                    newContent = data.content;
+                    newContent = this.renderMarkdown(data.content);
                   }
                 } catch (e) {
                   console.debug('Skipping invalid JSON line:', e);
@@ -335,9 +373,10 @@ export default {
 <style scoped>
 .dashboard {
   background: #1a1a1a;
-  min-height: 100vh;
+  height: 100%;
   opacity: 0;
   transform: translateY(20px);
+  overflow: hidden;
 }
 
 .fade-in {
@@ -472,9 +511,14 @@ export default {
 }
 
 .scrollable-content {
-  max-height: 100vh;
+  height: 100%;
   overflow-y: auto;
   padding: 20px 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 .description-content {
@@ -519,5 +563,11 @@ export default {
 
 .mb-4 {
   margin-bottom: 16px;
+}
+
+.v-container {
+  height: 100%;
+  padding: 0;
+  margin: 0;
 }
 </style> 
