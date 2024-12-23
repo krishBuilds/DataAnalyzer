@@ -166,7 +166,7 @@ For each visualization:
 3. Prioritize visualizations that tell a story about the data
 4. Include statistical insights where it would b really relevant (e.g., trend lines, averages, distributions)
 5. Ensure the visualization adds unique value and properly spaced
-6. Try to avoid heatmaps in general though do suggest if really helpful for data visualization
+6. Try to avoid heatmaps in general though do suggest if really helpful for data visualization and suggest at max 7 suggestions
 
 Return the response in this format:
 1. [Plot Type]: [Detailed insight-focused description]

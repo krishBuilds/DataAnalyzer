@@ -216,4 +216,30 @@ export class HandsontableOperations {
         const end = start + this.pageSize;
         return this.data.slice(start, end);
     }
+
+    clearData() {
+        this.data = [];
+        this.headers = [];
+        this.columns = [];
+        this.selectedRows = [];
+        if (this.history) {
+            this.history = [];
+        }
+        if (this.currentHistoryIndex !== undefined) {
+            this.currentHistoryIndex = -1;
+        }
+    }
+
+    reset() {
+        this.data = [{empty: ''}];
+        this.headers = [];
+        this.columns = [];
+        this.selectedRows = [];
+        if (this.history) {
+            this.history = [];
+        }
+        if (this.currentHistoryIndex !== undefined) {
+            this.currentHistoryIndex = -1;
+        }
+    }
 }

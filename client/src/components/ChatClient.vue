@@ -60,45 +60,33 @@
   </div>
 
   <div class="data-container">
-    <!-- Comment out header row for now -->
-    <!--<div v-if="tableData.length" class="table-header-row">
-      <div class="header-content">
-        <h2>{{ tableTitle || 'Dataset Overview' }}</h2>
-        <div class="file-info">
-          <span v-if="fileName"><i class="fas fa-file"></i> {{ fileName }}</span>
-          <span><i class="fas fa-table"></i> {{ tableData.length }} rows</span>
-          <span><i class="fas fa-columns"></i> {{ headers.length }} columns</span>
-        </div>
-      </div>
-    </div>-->
-
-    <!-- Left side: Table Section -->
     <div class="table-section" :style="{ width: tableWidth }">
-      <div class="grid-wrapper">
-        <hot-table
-          ref="hotTable"
-          :settings="hotSettings"
-          @afterChange="handleAfterChange"
-          @afterSelection="handleAfterSelection"
-          @afterColumnResize="handleColumnResize"
-          class="grid-component"
-          v-if="hotSettings.data.length"
-        />
+      <!-- Add background wrapper -->
+      <div class="table-background">
+        <div class="grid-wrapper">
+          <hot-table
+            ref="hotTable"
+            :settings="hotSettings"
+            @afterChange="handleAfterChange"
+            @afterSelection="handleAfterSelection"
+            @afterColumnResize="handleColumnResize"
+            class="grid-component"
+            v-if="hotSettings.data.length && !isDestroyed"
+          />
+        </div>
       </div>
     </div>
 
-    <!-- Add resizer between table and chat -->
     <div 
       class="resizer"
       @mousedown="startResize"
-      @dblclick="resetSize">
-      <div class="resizer-handle"></div>
+      @dblclick="resetSize"
+    >
+      <div class="resizer-line"></div>
     </div>
 
-    <!-- Right side: Chat Section -->
     <div class="chat-section" :style="{ width: `${chatWidth}px` }">
-      
-          <!-- Resizer -->
+      <!-- Resizer -->
       <div 
         class="resizer"
         :class="{ 'is-dragging': isDragging }" 
@@ -328,11 +316,14 @@ export default {
       maxChatWidth: 800,
       debugMode: false,
       fileName: '', // Ensure fileName is in data
+      isDestroyed: false
     }
   },
   created() {
+    // Reset state when component is created
+    this.gridOperations = new HandsontableOperations();
     this.hotSettings = {
-      data: [],
+      data: [{empty: ''}],
       colHeaders: true,
       rowHeaders: true,
       licenseKey: 'non-commercial-and-evaluation',
@@ -367,8 +358,8 @@ export default {
       }
     };
     
-    this.gridOperations.updateData([{empty: ''}]);
-    this.hotSettings.columns = this.gridOperations.getColumns();
+    // Clear any existing session storage
+    sessionStorage.removeItem('tableState');
   },
   computed: {
     changedRows() {
@@ -404,42 +395,16 @@ export default {
     });
     window.addEventListener('mousemove', this.handleResize);
     window.addEventListener('mouseup', this.stopResize);
+
+    // Initialize Handsontable after component is mounted
+    this.$nextTick(() => {
+      if (this.$refs.hotTable) {
+        this.hotInstance = this.$refs.hotTable.hotInstance;
+      }
+    });
   },
   beforeUnmount() {
-    // Clear all event listeners
-    window.removeEventListener('resize', this.onResize);
-    window.removeEventListener('mousemove', this.handleResize);
-    window.removeEventListener('mouseup', this.stopResize);
-    window.removeEventListener('keydown', this.handleKeyDown);
-    window.removeEventListener('keyup', this.handleKeyUp);
-
-    // Destroy Handsontable instance
-    if (this.$refs.hotTable?.hotInstance) {
-      this.$refs.hotTable.hotInstance.destroy();
-    }
-
-    // Clear large data objects
-    this.tableData = [];
-    this.chatMessages = [];
-    this.hotSettings.data = [];
-    
-    // // Clear grid operations
-    // if (this.gridOperations) {
-    //   this.gridOperations.clearData();
-    // }
-
-    // Clear any ongoing API requests
-    if (this.currentRequest) {
-      this.currentRequest.cancel();
-    }
-
-    // Reset all reactive properties
-    this.loading = false;
-    this.error = null;
-    this.userMessage = '';
-    this.selectedPlotHtml = null;
-    this.expandedCodes = {};
-    this.isDragging = false;
+    this.destroyHandsontable();
   },
   methods: {
     onResize() {
@@ -452,14 +417,23 @@ export default {
     handleAfterChange(changes, source) {
       if (!changes || source === 'loadData') return;
       
-      changes.forEach(([row, prop, oldValue, newValue]) => {
-        if (oldValue !== newValue) {
-          this.gridOperations.handleCellUpdate(row, prop, newValue);
-        }
-      });
-
-      // Update computed properties
-      this.$forceUpdate();
+      // Get complete current table state after any change
+      if (this.$refs.hotTable?.hotInstance) {
+        const currentData = this.$refs.hotTable.hotInstance.getData();
+        const currentHeaders = this.gridOperations.getHeaders();
+        
+        // Save complete state
+        const newState = {
+          data: JSON.parse(JSON.stringify(currentData)), // Deep copy to prevent reference issues
+          headers: [...currentHeaders],
+          selectedRows: new Set([...this.gridOperations.getSelectedRows()]),
+          changedRows: new Set([...this.gridOperations.getChangedRows()])
+        };
+        
+        // Update grid operations with complete state
+        this.gridOperations.updateData(newState.data);
+        this.gridOperations.saveState();
+      }
     },
 
     handleAfterSelection(row, col, row2, col2) {
@@ -766,15 +740,51 @@ export default {
     
     undo() {
       if (this.canUndo) {
-        this.gridOperations.undo();
-        this.updateTableData(this.gridOperations.getData());
+        const success = this.gridOperations.undo();
+        if (success) {
+          const data = this.gridOperations.getData();
+          
+          // Update Handsontable with previous state
+          this.hotSettings = {
+            ...this.hotSettings,
+            data: data,
+            colHeaders: this.gridOperations.getHeaders(),
+            columns: this.gridOperations.getColumns()
+          };
+          
+          // Force table refresh
+          this.$nextTick(() => {
+            if (this.$refs.hotTable?.hotInstance) {
+              this.$refs.hotTable.hotInstance.loadData(data);
+              this.$refs.hotTable.hotInstance.render();
+            }
+          });
+        }
       }
     },
     
     redo() {
       if (this.canRedo) {
-        this.gridOperations.redo();
-        this.updateTableData(this.gridOperations.getData());
+        const success = this.gridOperations.redo();
+        if (success) {
+          const data = this.gridOperations.getData();
+          
+          // Update Handsontable with next state
+          this.hotSettings = {
+            ...this.hotSettings,
+            data: data,
+            colHeaders: this.gridOperations.getHeaders(),
+            columns: this.gridOperations.getColumns()
+          };
+          
+          // Force table refresh
+          this.$nextTick(() => {
+            if (this.$refs.hotTable?.hotInstance) {
+              this.$refs.hotTable.hotInstance.loadData(data);
+              this.$refs.hotTable.hotInstance.render();
+            }
+          });
+        }
       }
     },
 
@@ -1158,14 +1168,16 @@ export default {
     },
 
     async updateTableData(data) {
+      if (this.isDestroyed) return;
+      
+      // Update Handsontable settings
       this.hotSettings = {
         ...this.hotSettings,
         data: data,
-        colHeaders: this.gridOperations.getHeaders(),
-        columns: this.gridOperations.getColumns()
+        columns: this.gridOperations.getColumns(),
+        colHeaders: this.gridOperations.getHeaders()
       };
 
-      // Force table refresh
       await this.$nextTick();
       if (this.$refs.hotTable?.hotInstance) {
         this.$refs.hotTable.hotInstance.loadData(data);
@@ -1212,23 +1224,136 @@ export default {
     },
 
     clearData() {
-      // if (this.gridOperations) {
-      //   this.gridOperations.clearData();
-      // }
-      this.hotSettings.data = [];
+      // Clear grid operations first
+      if (this.gridOperations) {
+        try {
+          // Try clearData first, if not available use reset or fall back to manual clearing
+          if (typeof this.gridOperations.clearData === 'function') {
+            this.gridOperations.clearData();
+          } else if (typeof this.gridOperations.reset === 'function') {
+            this.gridOperations.reset();
+          } else {
+            // Manual fallback
+            this.gridOperations.data = [];
+            this.gridOperations.headers = [];
+            this.gridOperations.columns = [];
+            this.gridOperations.selectedRows = [];
+          }
+        } catch (error) {
+          console.warn('Error clearing grid operations:', error);
+        }
+      }
+
+      // Clear Handsontable data
+      if (this.hotSettings) {
+        this.hotSettings.data = [];
+        this.hotSettings.columns = [];
+        this.hotSettings.colHeaders = [];
+      }
+
+      // Clear other data
       this.tableData = [];
       this.chatMessages = [];
+      this.fileName = '';
+    },
+
+    destroyHandsontable() {
+      // Remove event listeners
+      window.removeEventListener('resize', this.onResize);
+      window.removeEventListener('mousemove', this.handleResize);
+      window.removeEventListener('mouseup', this.stopResize);
+      window.removeEventListener('keydown', this.handleKeyDown);
+      window.removeEventListener('keyup', this.handleKeyUp);
+
+      // Save current state before destroying
+      const currentData = this.gridOperations.getData();
+      const currentHeaders = this.gridOperations.getHeaders();
+
+      // Destroy Handsontable instance
+      if (this.$refs.hotTable?.hotInstance) {
+        const hot = this.$refs.hotTable.hotInstance;
+        if (hot && !hot.isDestroyed) {
+          try {
+            hot.destroy();
+          } catch (error) {
+            console.warn('Error destroying Handsontable:', error);
+          }
+        }
+      }
+
+      // Clear data structures
+      this.hotSettings.data = [];
+      this.hotSettings.columns = [];
+      this.hotSettings.colHeaders = [];
+      
+      // Reset grid operations with saved state
+      this.gridOperations = new HandsontableOperations();
+      if (currentData.length && currentHeaders.length) {
+        this.gridOperations.updateData(currentData);
+        this.gridOperations.setHeaders(currentHeaders);
+      }
+
+      this.isDestroyed = true;
+    },
+
+    cleanup() {
+      // Remove event listeners first
+      window.removeEventListener('resize', this.onResize);
+      window.removeEventListener('mousemove', this.handleResize);
+      window.removeEventListener('mouseup', this.stopResize);
+      window.removeEventListener('keydown', this.handleKeyDown);
+      window.removeEventListener('keyup', this.handleKeyUp);
+
+      // Clear all data
+      this.clearData();
+      
+      // Set destroyed flag
+      this.isDestroyed = true;
+      
+      // Destroy Handsontable instance last
+      if (this.$refs.hotTable?.hotInstance) {
+        try {
+          this.$refs.hotTable.hotInstance.destroy();
+        } catch (error) {
+          console.warn('Error destroying Handsontable:', error);
+        }
+      }
+    },
+
+    beforeDestroy() {
+      this.cleanup();
+    },
+
+    destroyed() {
+      this.isDestroyed = true;
     }
+  },
+
+  // Add beforeRouteLeave navigation guard
+  beforeRouteLeave(to, from, next) {
+    // Save state before leaving
+    const savedState = {
+      data: this.gridOperations.getData(),
+      headers: this.gridOperations.getHeaders()
+    };
+    
+    this.cleanup();
+    
+    // Store state for potential recovery
+    if (to.name === 'analysis-board') {
+      sessionStorage.setItem('tableState', JSON.stringify(savedState));
+    }
+    
+    next();
   }
 }
 </script>
 
 <style scoped>
 .data-container {
-  background: white;
-  height: 100%;
   display: flex;
   position: relative;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -1299,28 +1424,25 @@ export default {
 .resizer {
   width: 4px;
   cursor: col-resize;
-  height: 100%;
   background: transparent;
   position: relative;
   z-index: 10;
+  margin: 0 2px;
+
+  &:hover .resizer-line,
+  &.is-dragging .resizer-line {
+    background: rgba(0, 127, 212, 0.4);
+  }
 }
 
-.resizer:hover,
-.resizer.is-dragging {
-  background: #007fd4;
-}
-
-.resizer-handle {
+.resizer-line {
   position: absolute;
-  top: 0;
   left: 0;
+  top: 0;
+  bottom: 0;
   width: 100%;
-  height: 100%;
-  transition: background-color 0.1s;
-}
-
-.resizer:hover .resizer-handle {
-  background: rgba(0, 127, 212, 0.4);
+  background: #ddd;
+  transition: background-color 0.2s;
 }
 
 .grid-wrapper {
@@ -1329,6 +1451,7 @@ export default {
   border: 1px solid #ddd;
   height: calc(100% - 48px);
   overflow: hidden;
+  background: white;
 }
 
 .grid-component {
@@ -1343,6 +1466,25 @@ export default {
 }
 :deep(.handsontable) {
   font-size: 14px;
+  background: white !important;
+  
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
 }
 
 :deep(.handsontable .htDimmed) {
@@ -2166,6 +2308,34 @@ textarea {
 .table-wrapper {
   position: relative;
 }
+.table-section {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  
+  :deep(.handsontable) {
+    scrollbar-width: thin;
+    scrollbar-color: #c1c1c1 #f1f1f1;
+    
+    &::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    &::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+    
+    &::-webkit-scrollbar-thumb:hover {
+      background: #a8a8a8;
+    }
+  }
+}
 
 .code-block-wrapper {
   max-height: 300px;
@@ -2775,5 +2945,18 @@ textarea {
   border-color: #ddd;
   color: #999;
   cursor: not-allowed;
+}
+
+.chat-section {
+  position: relative;
+  min-width: 280px;
+  max-width: 800px;
+}
+
+/* Add this new class */
+.table-background {
+  background: white;
+  height: 100%;
+  width: 100%;
 }
 </style>

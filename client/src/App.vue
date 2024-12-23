@@ -26,18 +26,26 @@
 
       <!-- Main Content Area -->
       <div class="main-content">
-        <ChatAnalysisBoard 
-          v-if="currentPage === 'analysis-board' && !showAnalysisDashboard"
-          @start-analysis="handleAnalysisStart"
-          @file-uploaded="handleFileUpload"
+        <keep-alive>
+          <ChatAnalysisBoard 
+            v-if="currentPage === 'analysis-board' && !showAnalysisDashboard"
+            @start-analysis="handleAnalysisStart"
+            @file-uploaded="handleFileUpload"
+          />
+        </keep-alive>
+        <keep-alive>
+          <AnalysisDashboard 
+            v-if="currentPage === 'analysis-board' && showAnalysisDashboard"
+            :initialQuery="analysisQuery"
+            :uploadedFile="analysisFile"
+            ref="dashboard"
+          />
+        </keep-alive>
+        <DataTable 
+          v-if="currentPage === 'data-table'" 
+          ref="dataTable"
+          @beforeDestroy="handleDataTableDestroy"
         />
-        <AnalysisDashboard 
-          v-if="currentPage === 'analysis-board' && showAnalysisDashboard"
-          :initialQuery="analysisQuery"
-          :uploadedFile="analysisFile"
-          ref="dashboard"
-        />
-        <DataTable v-if="currentPage === 'data-table'" />
       </div>
     </div>
   </div>
@@ -79,15 +87,40 @@ export default {
         this.analysisFile = fileInfo;
         this.showAnalysisDashboard = true;
       }
+    },
+    handleDataTableDestroy() {
+      if (this.$refs.dataTable) {
+        this.$refs.dataTable.cleanup();
+      }
     }
   },
   watch: {
-    currentPage(newPage) {
-      if (newPage === 'analysis-board') {
-        // Reset analysis dashboard state
-        this.showAnalysisDashboard = false;
-        this.analysisQuery = '';
-        this.analysisFile = null;
+    async currentPage(newPage, oldPage) {
+      if (oldPage === 'data-table') {
+        try {
+          await this.$nextTick();
+          if (this.$refs.dataTable) {
+            await new Promise(resolve => {
+              this.$refs.dataTable.cleanup();
+              resolve();
+            });
+          }
+        } catch (error) {
+          console.warn('Error during DataTable cleanup:', error);
+        }
+      }
+      
+      if (newPage === 'data-table') {
+        // Recover state if coming back from analysis board
+        const savedState = sessionStorage.getItem('tableState');
+        if (savedState) {
+          const state = JSON.parse(savedState);
+          await this.$nextTick();
+          if (this.$refs.dataTable) {
+            this.$refs.dataTable.updateTableData(state.data);
+          }
+          sessionStorage.removeItem('tableState');
+        }
       }
     }
   }

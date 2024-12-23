@@ -56,10 +56,10 @@ export default {
         this.uploadedFile = {
           name: file.name,
           type: file.type,
-          data: fileData
+          data: fileData,
+          extension: file.name.split('.').pop().toLowerCase()
         };
         
-        // Emit both events with the same data structure
         this.$emit('file-uploaded', this.uploadedFile);
       } catch (error) {
         console.error('Error reading file:', error);
@@ -79,17 +79,26 @@ export default {
     readFile(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
+        const extension = file.name.split('.').pop().toLowerCase();
         
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
           try {
             let data;
-            if (file.type === 'application/json') {
+            if (extension === 'json') {
               data = JSON.parse(e.target.result);
-            } else if (file.type === 'text/csv') {
+            } else if (extension === 'csv') {
               data = this.parseCSV(e.target.result);
-            } else {
-              // Add other file type handling as needed
-              data = e.target.result;
+            } else if (extension === 'xlsx' || extension === 'xls') {
+              // For Excel files, we'll need to use a library like XLSX
+              const XLSX = await import('xlsx');
+              const workbook = XLSX.read(e.target.result, { type: 'array' });
+              const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+              data = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
+              // Convert to object array with headers
+              const headers = data[0];
+              data = data.slice(1).map(row => 
+                Object.fromEntries(headers.map((header, i) => [header, row[i]]))
+              );
             }
             resolve(data);
           } catch (error) {
@@ -99,25 +108,31 @@ export default {
         
         reader.onerror = (error) => reject(error);
         
-        if (file.type === 'application/json' || file.type === 'text/csv') {
-          reader.readAsText(file);
-        } else {
+        if (extension === 'xlsx' || extension === 'xls') {
           reader.readAsArrayBuffer(file);
+        } else {
+          reader.readAsText(file);
         }
       });
     },
     
     parseCSV(csvText) {
-      // Basic CSV parsing - you might want to use a library like Papa Parse
-      const lines = csvText.split('\n');
+      const lines = csvText.trim().split('\n');
       const headers = lines[0].split(',').map(h => h.trim());
-      return lines.slice(1).map(line => {
-        const values = line.split(',');
-        return headers.reduce((obj, header, index) => {
-          obj[header] = values[index]?.trim();
-          return obj;
-        }, {});
-      });
+      
+      return lines.slice(1)
+        .filter(line => line.trim()) // Skip empty lines
+        .map(line => {
+          // Handle quoted values properly
+          const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+          return headers.reduce((obj, header, index) => {
+            let value = values[index] || '';
+            // Remove quotes if present
+            value = value.replace(/^"(.*)"$/, '$1').trim();
+            obj[header] = value;
+            return obj;
+          }, {});
+        });
     },
     removeFile() {
       this.fileData = null;
