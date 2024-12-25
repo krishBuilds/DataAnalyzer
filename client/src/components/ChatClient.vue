@@ -1,7 +1,7 @@
 <template>
   <div class="excel-toolbar">
-    <!-- File Upload group (New) -->
-    <div class="toolbar-group">
+    <div class="toolbar-left">
+      <!-- File input must be present -->
       <input 
         type="file" 
         @change="handleFileUpload" 
@@ -10,51 +10,51 @@
         class="file-input"
         id="file-upload"
       >
-      <label for="file-upload" class="toolbar-btn">
-        <i class="fas fa-file-upload"></i>
-        <span>Choose File</span>
-      </label>
-      <div v-if="fileName" class="file-name-display">
+      <!-- File button -->
+      <button class="toolbar-btn" @click="$refs.fileInput?.click()">
+        <i class="fas fa-file-import"></i>
+        <span>Open</span>
+      </button>
+      
+      <!-- Show filename when present -->
+      <div v-if="fileName" class="file-name">
         <i class="fas fa-file"></i>
         <span>{{ fileName }}</span>
       </div>
-    </div>
 
-    <!-- Left group: Undo/Redo -->
-    <div class="toolbar-group">
-      <button @click="undo" :disabled="!canUndo" class="toolbar-btn" title="Undo">
+      <!-- Separator -->
+      <div class="toolbar-separator"></div>
+      
+      <!-- Rest of the toolbar buttons -->
+      <button class="toolbar-btn icon-only" :disabled="!canUndo" @click="undo">
         <i class="fas fa-undo"></i>
       </button>
-      <button @click="redo" :disabled="!canRedo" class="toolbar-btn" title="Redo">
+      <button class="toolbar-btn icon-only" :disabled="!canRedo" @click="redo">
         <i class="fas fa-redo"></i>
       </button>
     </div>
 
-    <!-- Center group: Data Operations -->
-    <div class="toolbar-group">
-      <button @click="cleanData" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn">
+    <div class="toolbar-center">
+      <!-- Clean and Plot buttons with icons only -->
+      <button class="toolbar-btn" @click="cleanData">
         <i class="fas fa-broom"></i>
-        <span>Clean Data</span>
+        <span>Clean</span>
       </button>
-      <button @click="suggestPlots" :disabled="!gridOperations.getData().length || loading" class="toolbar-btn">
-        <i class="fas fa-chart-line"></i>
-        <span>Suggest Plots</span>
+      <button class="toolbar-btn" @click="suggestPlots">
+        <i class="fas fa-chart-bar"></i>
+        <span>Plot</span>
       </button>
     </div>
 
-    <!-- Right group: Export -->
-    <div class="toolbar-group">
-      <div class="file-name" v-if="fileName">
-        <i class="fas fa-file"></i>
-        <span>{{ fileName }}</span>
-      </div>
-      <button @click="exportData('csv')" :disabled="!gridOperations.getData().length" class="toolbar-btn">
+    <div class="toolbar-right">
+      <!-- Export buttons with minimal text -->
+      <button class="toolbar-btn" @click="exportData('csv')">
         <i class="fas fa-file-csv"></i>
-        <span>Export CSV</span>
+        <span>CSV</span>
       </button>
-      <button @click="exportData('xlsx')" :disabled="!gridOperations.getData().length" class="toolbar-btn">
+      <button class="toolbar-btn" @click="exportData('xlsx')">
         <i class="fas fa-file-excel"></i>
-        <span>Export XLSX</span>
+        <span>XLSX</span>
       </button>
     </div>
   </div>
@@ -97,6 +97,20 @@
 
       <div class="chat-container">
         <h3>AI Assistant</h3>
+        <div class="flow-controls">
+          <button @click="captureFlow" class="flow-btn">
+            <i class="fas fa-camera"></i>
+            <span>Capture</span>
+          </button>
+          <button @click="toggleFlowRecording" :class="['flow-btn', { 'recording': isRecording }]">
+            <i class="fas fa-record-vinyl"></i>
+            <span>{{ isRecording ? 'Stop' : 'Record' }}</span>
+          </button>
+          <button @click="showFlows" class="flow-btn">
+            <i class="fas fa-list"></i>
+            <span>Flows</span>
+          </button>
+        </div>
         <div class="chat-messages" ref="chatMessages">
           <div v-for="(message, index) in chatMessages" 
                :key="index" 
@@ -242,6 +256,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Replace the FlowsOverlay component with ChatFlows -->
+  <ChatFlows
+    v-if="showFlowsOverlay"
+    :show="showFlowsOverlay"
+    :flows="chatFlows.flows"
+    @close="handleFlowsClose"
+    @view-flow="viewFlow"
+    @delete-flow="deleteFlow"
+    @rename-flow="handleRenameFlow"
+  />
 </template>
 
 <script>
@@ -253,6 +278,8 @@ import * as XLSX from 'xlsx';
 import { nextTick } from 'vue';
 import { HandsontableOperations } from '../operations/HandsontableOperations';
 import MonacoEditor from './MonacoEditor.vue';
+import ChatFlows from './ChatFlows.vue';  // Keep only this import for the component
+import chatFlowsManager from '../utils/ChatFlows';  // Keep only this import for the manager
 
 // Register Handsontable modules
 registerAllModules();
@@ -261,8 +288,10 @@ export default {
   name: 'DataTable',
   components: {
     HotTable,
-    MonacoEditor
+    MonacoEditor,
+    ChatFlows  // Use ChatFlows instead of FlowsOverlay
   },
+  emits: ['update:debugMode', 'beforeDestroy'], // Add emits declaration
   data() {
     return {
       gridOperations: new HandsontableOperations(),
@@ -316,7 +345,11 @@ export default {
       maxChatWidth: 800,
       debugMode: false,
       fileName: '', // Ensure fileName is in data
-      isDestroyed: false
+      isDestroyed: false,
+      isRecording: false,
+      chatFlows: chatFlowsManager,
+      showFlowsOverlay: false,
+      isClosingOverlay: false,  // renamed from _isClosing
     }
   },
   created() {
@@ -360,6 +393,10 @@ export default {
     
     // Clear any existing session storage
     sessionStorage.removeItem('tableState');
+    
+    // Remove this as we're using chatFlowsManager directly
+    // const ChatFlows = require('../utils/ChatFlows').default;
+    // this.chatFlows = ChatFlows;
   },
   computed: {
     changedRows() {
@@ -404,6 +441,11 @@ export default {
     });
   },
   beforeUnmount() {
+    // Ensure cleanup when component is destroyed
+    if (this.showFlowsOverlay) {
+      this.closeFlows();
+    }
+    this.cleanup();
     this.destroyHandsontable();
   },
   methods: {
@@ -574,17 +616,27 @@ export default {
     },
 
     async sendMessage() {
-      if (!this.userMessage.trim() || !this.gridOperations.getData().length) return;
-
-      const question = this.userMessage;
-      this.chatMessages.push({ type: 'user', text: question });
+      if (!this.userMessage.trim() || this.loading) return;
+      
+      const userMessage = {
+        type: 'user',
+        text: this.userMessage
+      };
+      
+      this.chatMessages.push(userMessage);
+      
+      // Record user message if recording is active
+      if (this.isRecording) {
+        this.chatFlows.recordMessage(userMessage);
+      }
+      
       this.userMessage = '';
       this.loading = true;
       this.error = null;
 
       try {
         const selectedRowsData = this.getSelectedRowsData();
-        const response = await this.executeAnalysis(question, selectedRowsData);
+        const response = await this.executeAnalysis(userMessage.text, selectedRowsData);
         
         if (response.data.error) {
           // Display the first error
@@ -599,28 +651,29 @@ export default {
 
           // Attempt retry with error context
           const retryResponse = await this.executeAnalysis(
-            question,
+            userMessage.text,
             selectedRowsData,
             response.data.error
           );
 
           if (retryResponse.data.error) {
-            // Display retry error if it also fails
-            this.displayError({
-              data: {
-                error: {
-                  message: retryResponse.data.error.message,
-                  code: retryResponse.data.error.code
-                }
-              }
-            });
+            this.displayError(retryResponse);
           } else {
-            // Retry succeeded
             await this.handleSuccessResponse(retryResponse);
           }
         } else {
-          // Initial attempt succeeded
           await this.handleSuccessResponse(response);
+          
+          // Record bot response if recording is active
+          if (this.isRecording) {
+            this.chatFlows.recordMessage({
+              type: 'bot',
+              text: response.data.analysis,
+              code: response.data.code,
+              plot_html: response.data.plot_html,
+              suggestions: response.data.suggestions
+            });
+          }
         }
       } catch (error) {
         this.handleError(error);
@@ -690,6 +743,11 @@ export default {
         await nextTick();
         if (this.$refs.chatMessages) {
           this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        }
+        
+        // Record bot message if recording is active
+        if (this.isRecording) {
+          this.chatFlows.recordMessage(botMessage);
         }
       } catch (error) {
         console.error('Error in handleSuccessResponse:', error);
@@ -1326,6 +1384,134 @@ export default {
 
     destroyed() {
       this.isDestroyed = true;
+    },
+
+    captureFlow() {
+      const messagesToCapture = this.chatMessages.map(msg => ({
+        type: msg.type,
+        text: msg.text,
+        timestamp: new Date().toISOString(),
+        ...(msg.code && { code: msg.code }),
+        ...(msg.plot_html && { plot_html: msg.plot_html }),
+        ...(msg.suggestions && { suggestions: msg.suggestions }),
+        ...(msg.error && { error: msg.error }),
+        ...(msg.context && { context: msg.context })
+      }));
+
+      const flow = this.chatFlows.captureCurrentFlow(messagesToCapture, this.fileName);
+      
+      this.chatMessages.push({
+        type: 'system',
+        text: `Flow captured: ${flow.name}`,
+        timestamp: new Date().toISOString()
+      });
+    },
+
+    toggleFlowRecording() {
+      if (this.isRecording) {
+        this.chatFlows.stopRecording();
+        this.chatMessages.push({
+          type: 'system',
+          text: 'Flow recording stopped'
+        });
+      } else {
+        this.chatFlows.startRecording(this.fileName);
+        this.chatMessages.push({
+          type: 'system',
+          text: 'Flow recording started'
+        });
+      }
+      this.isRecording = !this.isRecording;
+    },
+
+    showFlows() {
+      if (this.isClosingOverlay) return;
+      this.showFlowsOverlay = true;
+    },
+
+    closeFlows() {
+      // Immediate cleanup
+      if (this.isRecording) {
+        this.chatFlows.stopRecording();
+        this.isRecording = false;
+      }
+      
+      // Force immediate state update
+      this.showFlowsOverlay = false;
+      
+      // Clear any pending timers or operations
+      if (this._closeFlowsTimer) {
+        clearTimeout(this._closeFlowsTimer);
+      }
+    },
+
+    viewFlow(flow) {
+      if (!flow) return;
+      
+      // First update messages
+      this.chatMessages = flow.messages.map(msg => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp)
+      }));
+      
+      if (flow.fileName) {
+        this.fileName = flow.fileName;
+      }
+      
+      // Then close overlay
+      this.closeFlows();
+      
+      // Finally scroll to bottom
+      this.$nextTick(() => {
+        if (this.$refs.chatMessages) {
+          this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        }
+      });
+    },
+
+    deleteFlow(flowId) {
+      if (confirm('Are you sure you want to delete this flow?')) {
+        this.chatFlows.deleteFlow(flowId);
+      }
+    },
+
+    // Add rename flow handler
+    handleRenameFlow({ id, name }) {
+      this.chatFlows.renameFlow(id, name);
+    },
+
+    handleFlowsClose() {
+      // Stop recording if active
+      if (this.isRecording) {
+        this.chatFlows.stopRecording();
+        this.isRecording = false;
+      }
+      
+      // Set flag to prevent re-renders
+      this.isClosingOverlay = true;
+      
+      // Force immediate state update
+      this.showFlowsOverlay = false;
+      
+      // Clear the flag after a short delay
+      setTimeout(() => {
+        this.isClosingOverlay = false;
+      }, 100);
+    }
+  },
+
+  // Add watcher for showFlowsOverlay
+  watch: {
+    showFlowsOverlay(newVal) {
+      if (!newVal) {
+        // Cleanup when overlay is closed
+        this.$nextTick(() => {
+          if (this.isRecording) {
+            this.chatFlows.stopRecording();
+            this.isRecording = false;
+          }
+        });
+      }
     }
   },
 
@@ -1358,37 +1544,76 @@ export default {
 }
 
 .excel-toolbar {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  padding: 8px 16px;
-  background: #f5f5f5;
+  padding: 4px 12px;
+  background: #f8f9fa;
   border-bottom: 1px solid #ddd;
-  height: 56px;
+  gap: 16px;
+  height: 40px; /* Even more compact */
 }
 
-.toolbar-group {
+.toolbar-left {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 8px;
+}
+
+.file-input {
+  display: none;
+}
+
+.file-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #666;
+  font-size: 13px;
+  padding: 0 8px;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 24px;
+  background: #ddd;
+  margin: 0 4px;
 }
 
 .toolbar-btn {
-  display: flex;
+  height: 28px; /* Even smaller height */
+  padding: 0 10px;
+  font-size: 13px;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 12px;
+  min-width: 28px;
   border: 1px solid #ddd;
-  border-radius: 4px;
   background: white;
-  color: #333;
+  color: #444;
   cursor: pointer;
   transition: all 0.2s;
 }
 
+.toolbar-btn.icon-only {
+  width: 28px;
+  padding: 0;
+}
+
 .toolbar-btn:hover:not(:disabled) {
-  background: #f8f9fa;
+  background: #f5f5f5;
   border-color: #ccc;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toolbar-center, .toolbar-right {
+  display: flex;
+  gap: 4px;
 }
 
 .toolbar-btn.primary {
@@ -1616,7 +1841,7 @@ export default {
 
 .chat-container {
   background: #f8f9fa;
-  border-radius: 8px;
+  border-radius: 0; /* Remove rounded corners */
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -1630,10 +1855,10 @@ export default {
 
 .chat-container h3 {
   margin: 0;
-  padding: 15px;
-  border-bottom: 1px solid #ddd;
+  padding: 15px 15px 10px 15px;  /* Reduce bottom padding */
   color: #000000;
   font-weight: 600;
+  border-bottom: none;  /* Remove the border */
 }
 
 .chat-messages {
@@ -1695,7 +1920,7 @@ export default {
 }
 
 .message.user {
-  background: #1565c0; /* Darker blue */
+  background: #1565c0;
   color: white;
   align-self: flex-end;
   max-width: 85%;
@@ -2958,5 +3183,63 @@ textarea {
   background: white;
   height: 100%;
   width: 100%;
+}
+
+.flow-controls {
+  display: flex;
+  padding: 0 8px 4px 8px;  /* Remove top padding */
+  gap: 0;
+  margin-top: -4px;  /* Move buttons closer to AI Assistant */
+}
+
+.flow-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  background: white;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.8rem;
+  height: 24px;  /* Slightly reduce height */
+  margin: 0;
+}
+
+/* Remove border radius for middle button */
+.flow-btn:not(:first-child):not(:last-child) {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+/* Add border radius only to first and last buttons */
+.flow-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.flow-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.flow-btn.recording {
+  background: #ff4444;
+  color: white;
+  border-color: #cc0000;
+}
+
+.flow-btn:hover {
+  background: #f5f5f5;
+}
+
+.flow-btn.recording:hover {
+  background: #cc0000;
+}
+
+.close-btn:hover {
+  background: #f5f5f5;
 }
 </style>
