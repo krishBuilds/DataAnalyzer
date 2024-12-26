@@ -266,6 +266,8 @@
     @view-flow="viewFlow"
     @delete-flow="deleteFlow"
     @rename-flow="handleRenameFlow"
+    @flow-step-complete="handleFlowStepComplete"
+    @flow-complete="handleFlowComplete"
   />
 </template>
 
@@ -618,9 +620,17 @@ export default {
     async sendMessage() {
       if (!this.userMessage.trim() || this.loading) return;
       
+      // Get 5 random rows from current data
+      const sampleData = this.getSampleRows(5);
+      
       const userMessage = {
         type: 'user',
-        text: this.userMessage
+        text: this.userMessage,
+        timestamp: new Date(),
+        sampleData: {
+          headers: this.gridOperations.getHeaders(),
+          rows: sampleData
+        }
       };
       
       this.chatMessages.push(userMessage);
@@ -1430,42 +1440,51 @@ export default {
     },
 
     closeFlows() {
-      // Immediate cleanup
+      // Stop recording first if active
       if (this.isRecording) {
         this.chatFlows.stopRecording();
         this.isRecording = false;
       }
       
-      // Force immediate state update
-      this.showFlowsOverlay = false;
-      
-      // Clear any pending timers or operations
+      // Clear any pending timers
       if (this._closeFlowsTimer) {
         clearTimeout(this._closeFlowsTimer);
       }
+
+      // Set flag and update state immediately
+      this.isClosingOverlay = true;
+      this.showFlowsOverlay = false;
+
+      // Reset flag after a short delay
+      this._closeFlowsTimer = setTimeout(() => {
+        this.isClosingOverlay = false;
+      }, 100);
     },
 
     viewFlow(flow) {
       if (!flow) return;
       
-      // First update messages
-      this.chatMessages = flow.messages.map(msg => ({
-        ...msg,
-        timestamp: new Date(msg.timestamp)
-      }));
-      
-      if (flow.fileName) {
-        this.fileName = flow.fileName;
-      }
-      
-      // Then close overlay
+      // Close overlay first
       this.closeFlows();
       
-      // Finally scroll to bottom
+      // Use nextTick to ensure DOM is updated before modifying messages
       this.$nextTick(() => {
-        if (this.$refs.chatMessages) {
-          this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+        // Then update messages
+        this.chatMessages = flow.messages.map(msg => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }));
+        
+        if (flow.fileName) {
+          this.fileName = flow.fileName;
         }
+        
+        // Scroll to bottom after messages are updated
+        this.$nextTick(() => {
+          if (this.$refs.chatMessages) {
+            this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+          }
+        });
       });
     },
 
@@ -1481,30 +1500,82 @@ export default {
     },
 
     handleFlowsClose() {
-      // Stop recording if active
-      if (this.isRecording) {
-        this.chatFlows.stopRecording();
-        this.isRecording = false;
+      // Use the closeFlows method to ensure consistent cleanup
+      this.closeFlows();
+    },
+
+    // Add new method to get random rows
+    getSampleRows(count) {
+      const data = this.gridOperations.getData();
+      const headers = this.gridOperations.getHeaders();
+      if (!data.length) return null;
+      
+      const randomRows = [];
+      const totalRows = data.length;
+      const indices = new Set();
+      
+      while (indices.size < Math.min(count, totalRows)) {
+        indices.add(Math.floor(Math.random() * totalRows));
       }
       
-      // Set flag to prevent re-renders
-      this.isClosingOverlay = true;
+      Array.from(indices).forEach(index => {
+        randomRows.push(data[index]);
+      });
       
-      // Force immediate state update
-      this.showFlowsOverlay = false;
-      
-      // Clear the flag after a short delay
-      setTimeout(() => {
-        this.isClosingOverlay = false;
-      }, 100);
-    }
+      return {
+        headers,
+        rows: randomRows
+      };
+    },
+
+    async handleFlowStepComplete({ stepIndex, totalSteps, output }) {
+      // Update progress in chat
+      this.chatMessages.push({
+        type: 'system',
+        text: `Executing flow step ${stepIndex + 1}/${totalSteps}`
+      });
+
+      // If there's data to update, update the grid
+      if (output.data) {
+        await this.updateTableData(output.data);
+      }
+
+      // If there's a plot or analysis, show it
+      if (output.plot_html || output.analysis) {
+        this.chatMessages.push({
+          type: 'bot',
+          text: output.analysis || 'Step completed',
+          plot_html: output.plot_html
+        });
+      }
+    },
+
+    async handleFlowComplete({ success, data, error }) {
+      if (success) {
+        // Final data update if needed
+        if (data) {
+          await this.updateTableData(data);
+        }
+        
+        this.chatMessages.push({
+          type: 'system',
+          text: 'Flow execution completed successfully'
+        });
+      } else {
+        this.chatMessages.push({
+          type: 'system',
+          text: `Flow execution failed: ${error}`,
+          error: true
+        });
+      }
+    },
   },
 
   // Add watcher for showFlowsOverlay
   watch: {
     showFlowsOverlay(newVal) {
       if (!newVal) {
-        // Cleanup when overlay is closed
+        // Use nextTick to ensure DOM is updated
         this.$nextTick(() => {
           if (this.isRecording) {
             this.chatFlows.stopRecording();
@@ -1547,11 +1618,11 @@ export default {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  padding: 4px 12px;
+  padding: 3px 12px; /* Reduced padding */
   background: #f8f9fa;
   border-bottom: 1px solid #ddd;
   gap: 16px;
-  height: 40px; /* Even more compact */
+  height: 30px; /* Reduced from 40px to 30px (25% reduction) */
 }
 
 .toolbar-left {
@@ -1569,26 +1640,26 @@ export default {
   align-items: center;
   gap: 4px;
   color: #666;
-  font-size: 13px;
-  padding: 0 8px;
+  font-size: 12px; /* Smaller filename text */
+  padding: 0 6px;
 }
 
 .toolbar-separator {
   width: 1px;
-  height: 24px;
+  height: 20px; /* Reduced separator height */
   background: #ddd;
   margin: 0 4px;
 }
 
 .toolbar-btn {
-  height: 28px; /* Even smaller height */
-  padding: 0 10px;
-  font-size: 13px;
+  height: 24px; /* Reduced button height */
+  padding: 0 8px;
+  font-size: 12px; /* Slightly smaller font */
+  min-width: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 28px;
   border: 1px solid #ddd;
   background: white;
   color: #444;
@@ -1597,7 +1668,7 @@ export default {
 }
 
 .toolbar-btn.icon-only {
-  width: 28px;
+  width: 24px;
   padding: 0;
 }
 
@@ -1741,7 +1812,7 @@ export default {
   background: #f8f9fa;
   border-bottom: 1px solid #ddd;
   gap: 24px;
-  height:48px
+  height:40px
 }
 
 .toolbar-left {
@@ -1912,11 +1983,26 @@ export default {
 }
 
 .message {
-  padding: 8px 12px;
+  padding: 12px;
+  margin: 8px 0;
   border-radius: 8px;
-  width: calc(100% - 24px);
-  box-sizing: border-box;
-  margin-bottom: 4px;
+  background: #f8f9fa;
+  color: #212529; /* Set default text color to black */
+}
+
+.message.system {
+  background: #e9ecef;
+  color: #212529; /* Ensure system messages are black */
+}
+
+.message.error {
+  background: #fff3f3;
+  color: #dc3545; /* Keep error messages red */
+}
+
+.message.success {
+  background: #f0fff4;
+  color: #28a745; /* Keep success messages green */
 }
 
 .message.user {

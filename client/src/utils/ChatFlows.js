@@ -43,13 +43,32 @@ class ChatFlow {
   }
 
   captureCurrentFlow(messages, fileName = null) {
+    const cleanMessages = [];
+    
+    for (let i = 0; i < messages.length; i++) {
+      const currentMsg = messages[i];
+      const nextMsg = messages[i + 1];
+      
+      if (currentMsg.type === 'user') {
+        if (nextMsg && nextMsg.type === 'bot' && !nextMsg.error) {
+          cleanMessages.push({
+            ...currentMsg,
+            sampleData: currentMsg.sampleData || null
+          });
+          cleanMessages.push(nextMsg);
+        }
+        i++;
+      }
+    }
+
     const flow = {
       id: Date.now(),
       timestamp: new Date().toISOString(),
-      messages: [...messages],
+      messages: cleanMessages,
       name: this.generateFlowName(fileName),
       fileName: fileName
     };
+    
     this.flows.push(flow);
     this.saveFlows();
     return flow;
@@ -57,18 +76,29 @@ class ChatFlow {
 
   recordMessage(message) {
     if (this.isRecording && this.currentRecording) {
-      const messageClone = {
-        type: message.type,
-        text: message.text,
-        timestamp: new Date().toISOString(),
-        ...(message.code && { code: message.code }),
-        ...(message.plot_html && { plot_html: message.plot_html }),
-        ...(message.suggestions && { suggestions: message.suggestions }),
-        ...(message.error && { error: message.error }),
-        ...(message.context && { context: message.context })
-      };
+      const messages = this.currentRecording.messages;
+      const lastMessage = messages[messages.length - 1];
       
-      this.currentRecording.messages.push(messageClone);
+      if (message.type === 'user') {
+        messages.push({
+          ...message,
+          sampleData: message.sampleData || null
+        });
+      } 
+      else if (message.type === 'bot') {
+        if (!message.error) {
+          if (lastMessage && lastMessage.type === 'user') {
+            messages.push(message);
+          } else if (lastMessage && lastMessage.type === 'bot') {
+            messages[messages.length - 1] = message;
+          }
+        } else {
+          if (lastMessage && lastMessage.type === 'user') {
+            messages.pop();
+          }
+        }
+      }
+      
       this.saveFlows();
     }
   }

@@ -17,6 +17,9 @@ const DataCleaningRequest = require('./DataCleaningRequest');
 const PythonDebugger = require('./PythonDebugger');
 const PythonExecutor = require('./PythonExecutor');
 const dashboardRouter = require('./dashboardRouter');
+const FlowExecutor = require('./FlowExecutor');
+const multer = require('multer');
+const upload = multer({ dest: path.join(__dirname, 'temp/uploads/') });
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -714,4 +717,130 @@ app.post('/api/debug/stop', (req, res) => {
 
 // Mount the dashboard router with a specific prefix
 app.use('/api/dashboard', dashboardRouter);
+
+const flowExecutor = new FlowExecutor();
+
+app.post('/api/execute-flow-step', async (req, res) => {
+  try {
+    const { 
+      question,    // Original prompt
+      data,        // Current data or null for first step
+      mode,        // 'all' or 'selected'
+      code,        // Original code to adapt
+      previousOutput,
+      sampleData 
+    } = req.body;
+
+    // Use current data from memory if not provided in request
+    const currentData = data || currentData || [];
+
+    const result = await flowExecutor.executeFlowStep({
+      code,
+      prompt: question,
+      sampleData,
+      currentData,
+      mode
+    });
+
+    res.json({
+      success: true,
+      data: result.data,
+      adaptedCode: result.adaptedCode,
+      analysis: result.analysis,
+      output: result.output
+    });
+
+  } catch (error) {
+    debug('Flow execution error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Flow execution endpoint
+app.post('/api/flows/execute', async (req, res) => {
+  try {
+    const { flowId, type, currentData, headers, code, prompt, sampleData } = req.body;
+    
+    // Validate required parameters
+    if (!flowId || !currentData || !code || !prompt) {
+      debug('Missing parameters:', { flowId, currentData: !!currentData, code: !!code, prompt: !!prompt });
+      throw new Error('Missing required parameters');
+    }
+
+    const flowExecutor = new FlowExecutor();
+    debug('Executing flow step with:', { flowId, type, code: code.substring(0, 100) + '...', prompt });
+    
+    const result = await flowExecutor.executeFlowStep({
+      flowId,
+      type,
+      currentData,
+      headers,
+      code,
+      prompt,
+      sampleData
+    });
+
+    res.json({
+      success: true,
+      data: result.data,
+      adaptedCode: result.adaptedCode,
+      analysis: result.analysis,
+      output: result.output
+    });
+
+  } catch (error) {
+    debug('Flow execution error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Flow execution failed'
+    });
+  }
+});
+
+// Flow execution with file endpoint
+app.post('/api/flows/execute-with-file', upload.single('file'), async (req, res) => {
+  try {
+    const { flowId } = req.body;
+    const currentData = JSON.parse(req.body.currentData);
+    const headers = JSON.parse(req.body.headers);
+    const code = req.body.code;
+    const prompt = req.body.prompt;
+    const sampleData = JSON.parse(req.body.sampleData);
+    
+    if (!flowId || !currentData || !code || !prompt || !req.file) {
+      throw new Error('Missing required parameters');
+    }
+
+    const flowExecutor = new FlowExecutor();
+    const result = await flowExecutor.executeFlowStep({
+      flowId,
+      type: 'file',
+      currentData,
+      headers,
+      code,
+      prompt,
+      sampleData,
+      file: req.file
+    });
+
+    res.json({
+      success: true,
+      data: result.data,
+      adaptedCode: result.adaptedCode,
+      analysis: result.analysis,
+      output: result.output
+    });
+
+  } catch (error) {
+    debug('Flow execution error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = app;
