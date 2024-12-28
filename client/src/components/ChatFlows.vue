@@ -1041,8 +1041,9 @@ export default {
 
         for (let i = 0; i < orderedNodes.length; i++) {
           const node = orderedNodes[i];
+          node.data.isExecuting = true;
+
           const messages = node.data.messages;
-          
           const messageContent = {
             prompt: messages.find(m => m.type === 'user')?.text,
             code: messages.find(m => m.type === 'assistant' || m.type === 'bot')?.code,
@@ -1054,37 +1055,22 @@ export default {
             continue;
           }
 
-          node.data.isExecuting = true;
-
-          let payload = {
-            flowId: this.selectedFlow.id,
-            type: type,
-            currentData: this.$parent.gridOperations.getData(),
-            headers: this.$parent.gridOperations.getHeaders(),
-            code: messageContent.code?.trim(),
-            prompt: messageContent.prompt?.trim(),
-            sampleData: messageContent.sampleData?.rows || [] // Pass sample data rows
-          };
-
           try {
-            let response;
-            if (type === 'file' && this.$parent.fileName) {
-              // Create FormData for file upload
-              const formData = new FormData();
-              formData.append('flowId', payload.flowId);
-              formData.append('currentData', JSON.stringify(payload.currentData));
-              formData.append('headers', JSON.stringify(payload.headers));
-              formData.append('code', payload.code);
-              formData.append('prompt', payload.prompt);
-              formData.append('sampleData', JSON.stringify(payload.sampleData));
-              formData.append('file', await this.getFileFromInput());
+            // Get current data from parent component
+            const currentData = this.$parent.gridOperations.getData();
+            const currentHeaders = this.$parent.gridOperations.getHeaders();
 
-              response = await axios.post('/api/flows/execute-with-file', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-              });
-            } else {
-              response = await axios.post('/api/flows/execute', payload);
-            }
+            let payload = {
+              flowId: this.selectedFlow.id,
+              type: type,
+              currentData: currentData,
+              headers: currentHeaders,
+              code: messageContent.code?.trim(),
+              prompt: messageContent.prompt?.trim(),
+              sampleData: messageContent.sampleData
+            };
+
+            const response = await axios.post('/api/flows/execute', payload);
 
             // Update node execution status
             node.data.executionResult = {
@@ -1092,16 +1078,16 @@ export default {
               message: 'Step completed successfully'
             };
 
-            // Emit step completion
+            // Emit step completion with data
             this.$emit('flow-step-complete', {
               stepIndex: i,
               totalSteps: orderedNodes.length,
-              output: response.data
+              output: response.data.data
             });
 
             // Update data for next step if needed
             if (response.data.data) {
-              await this.$parent.gridOperations.setData(response.data.data);
+              await this.$parent.updateTableData(response.data.data);
             }
 
           } catch (error) {

@@ -1236,20 +1236,33 @@ export default {
     },
 
     async updateTableData(data) {
-      if (this.isDestroyed) return;
-      
-      // Update Handsontable settings
-      this.hotSettings = {
-        ...this.hotSettings,
-        data: data,
-        columns: this.gridOperations.getColumns(),
-        colHeaders: this.gridOperations.getHeaders()
-      };
+      if (!data || !Array.isArray(data)) {
+        console.warn('Invalid data format received:', data);
+        return;
+      }
 
-      await this.$nextTick();
-      if (this.$refs.hotTable?.hotInstance) {
-        this.$refs.hotTable.hotInstance.loadData(data);
-        this.$refs.hotTable.hotInstance.render();
+      try {
+        // Update hotSettings
+        this.hotSettings = {
+          ...this.hotSettings,
+          data: data,
+          colHeaders: Object.keys(data[0]),
+          columns: Object.keys(data[0]).map(key => ({ data: key }))
+        };
+
+        // Update grid operations
+        this.gridOperations.updateData(data);
+        this.gridOperations.saveState();
+
+        // Force table refresh
+        await this.$nextTick();
+        if (this.$refs.hotTable?.hotInstance) {
+          this.$refs.hotTable.hotInstance.loadData(data);
+          this.$refs.hotTable.hotInstance.render();
+        }
+      } catch (error) {
+        console.error('Error updating table data:', error);
+        throw error;
       }
     },
 
@@ -1529,24 +1542,45 @@ export default {
     },
 
     async handleFlowStepComplete({ stepIndex, totalSteps, output }) {
-      // Update progress in chat
-      this.chatMessages.push({
-        type: 'system',
-        text: `Executing flow step ${stepIndex + 1}/${totalSteps}`
-      });
-
-      // If there's data to update, update the grid
-      if (output.data) {
-        await this.updateTableData(output.data);
-      }
-
-      // If there's a plot or analysis, show it
-      if (output.plot_html || output.analysis) {
+      try {
+        // Update progress in chat
         this.chatMessages.push({
-          type: 'bot',
-          text: output.analysis || 'Step completed',
-          plot_html: output.plot_html
+          type: 'system',
+          text: `Executing flow step ${stepIndex + 1}/${totalSteps}`
         });
+
+        // Update table data if present
+        if (output.data) {
+          await this.updateTableData(output.data);
+          
+          // Force grid operations to update its internal state
+          this.gridOperations.updateData(output.data);
+          this.gridOperations.saveState();
+          
+          // Force table refresh
+          this.$nextTick(() => {
+            if (this.$refs.hotTable?.hotInstance) {
+              this.$refs.hotTable.hotInstance.loadData(output.data);
+              this.$refs.hotTable.hotInstance.render();
+            }
+          });
+        }
+
+        // If there's a plot or analysis, show it
+        if (output.plot_html || output.analysis) {
+          this.chatMessages.push({
+            type: 'bot',
+            text: output.analysis || 'Step completed',
+            plot_html: output.plot_html
+          });
+        }
+
+        // Wait for table update to complete
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+      } catch (error) {
+        console.error('Error handling flow step:', error);
+        throw error;
       }
     },
 

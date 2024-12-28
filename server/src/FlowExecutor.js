@@ -19,7 +19,7 @@ class FlowExecutor {
     try {
       const systemPrompt = `You are a Python data analysis expert. You must adapt the given code to work with the current dataset structure, only transform the methods mentioned such as process_data or create_visualization here. The code is most likely correct, only make minor adjustments here. The data was passed in similar format for original data and the current data is also in similar format
       Critical requirements:
-      1. Maintain data integrity during transformations
+      1. Maintain data integrity during transformations and keep in mind that operation is to be performed over current data here, so make the code accordingly and adjust the given code with minimal adjustments if required.
       2. Preserve the original operation's intent
       3. Return only executable Python code with proper error handling`;
       
@@ -31,10 +31,10 @@ ${code}
 Original Sample Data Structure:
 ${JSON.stringify(sampleData, null, 2)}
 
-Current Data Sample (first 15 rows):
+\n\nCurrent Data Sample (first 15 rows):
 ${JSON.stringify(currentData.slice(0, 15), null, 2)}
 
-Current Data Headers: ${Object.keys(currentData[0]).join(', ')}
+\n\nCurrent Data Headers: ${Object.keys(currentData[0]).join(', ')}
 
 Requirements:
 1. Return executable Python code, that will run on the current data and not the original data
