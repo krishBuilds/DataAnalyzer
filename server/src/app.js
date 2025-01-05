@@ -20,6 +20,8 @@ const dashboardRouter = require('./dashboardRouter');
 const FlowExecutor = require('./FlowExecutor');
 const multer = require('multer');
 const upload = multer({ dest: path.join(__dirname, 'temp/uploads/') });
+const DashboardGenerator = require('./DashboardGenerator');
+const DataAnalyzer = require('./BasicDataAnalysis');
 
 // Validate environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -165,7 +167,7 @@ Your code must:
 2. Start directly with imports - no description text
 3. Create clear and informative visualizations
 4. Save plots as interactive HTML file and return plot_html and dont add any image related code
-5. Use plotly for visualization
+5. Use plotly for visualization and editable as true in the configuration
 
 Example structure:
 import pandas as pd
@@ -356,7 +358,7 @@ ${JSON.stringify(sampleRows.map(row => {
   }), null, 2)}`}
 
 Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample.
-${isVisualization ? 'Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data .' : 'Process the data according to the user request.'}
+${isVisualization ? 'Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data. ' : 'Process the data according to the user request.'}
 
 Task: ${question}`;
 
@@ -839,6 +841,56 @@ app.post('/api/flows/execute-with-file', upload.single('file'), async (req, res)
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// Dashboard specific routes
+app.post('/api/dashboard/get-suggestions', async (req, res) => {
+  try {
+    const { data, headers, analysis, config } = req.body;
+    const dashboardGenerator = new DashboardGenerator(openai);
+    const result = await dashboardGenerator.getVisualizationSuggestions(
+      data, 
+      headers, 
+      analysis, 
+      config
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting suggestions:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/dashboard/generate-visualizations', async (req, res) => {
+  try {
+    const { data, suggestions, analysis, config } = req.body;
+    const dashboardGenerator = new DashboardGenerator(openai);
+    const result = await dashboardGenerator.generateVisualizations(data, suggestions, analysis, config);
+    res.json(result);
+  } catch (error) {
+    console.error('Error generating visualizations:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/dashboard/analyze', async (req, res) => {
+  try {
+    const { data, config } = req.body;
+    const dataAnalyzer = new DataAnalyzer();
+    
+    // Perform basic analysis
+    const analysisResult = await dataAnalyzer.analyzeData(data);
+    
+    res.json({
+      analysis: analysisResult.analysis,
+      rawAnalysis: analysisResult.raw
+    });
+  } catch (error) {
+    console.error('Error in dashboard analysis:', error);
+    res.status(500).json({ 
+      error: error.message || 'Analysis failed'
     });
   }
 });

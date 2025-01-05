@@ -153,7 +153,7 @@ export default {
   mounted() {
     setTimeout(() => {
       this.mounted = true;
-      this.generatePlotsStream();
+      //this.generatePlotsStream();
       if (this.initialQuery) {
         this.messages.push({
           type: 'user',

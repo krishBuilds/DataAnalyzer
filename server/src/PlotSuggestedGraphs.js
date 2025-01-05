@@ -4,6 +4,7 @@ const path = require('path');
 const { exec, spawn } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
+const USE_PERPLEXITY = process.env.USE_PERPLEXITY === 'false';
 
 // Import the visualization prompt from app.js
 const visualizationPrompt = `You are a Python programming assistant that generates complete, executable scripts.
@@ -174,14 +175,35 @@ Return the response in this format:
 ...etc`;
 
     try {
-      const completion = await this.openai.chat.completions.create({
-        messages: [
-          { role: "system", content: "You are a data visualization expert." },
-          { role: "user", content: suggestionPrompt }
-        ],
-        model: "gpt-4o-mini",
-      });
-      const suggestions = this.parseSuggestions(completion.choices[0].message.content);
+      let completion;
+      if (USE_PERPLEXITY) {
+        completion = await fetch('https://api.perplexity.ai/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-sonar-large-128k-online',  // Using the 70B model
+            messages: [
+              { role: "system", content: "You are a data visualization expert." },
+              { role: "user", content: suggestionPrompt }
+            ]
+          })
+        }).then(res => res.json());
+      } else {
+        completion = await this.openai.chat.completions.create({
+          messages: [
+            { role: "system", content: "You are a data visualization expert." },
+            { role: "user", content: suggestionPrompt }
+          ],
+          model: "gpt-4o-mini",
+        });
+      }
+
+      const suggestions = this.parseSuggestions(
+        USE_PERPLEXITY ? completion.choices[0].message.content : completion.choices[0].message.content
+      );
       return suggestions;
     }
     catch (error) {
@@ -237,13 +259,31 @@ For the data plot the: ${suggestion.description}
 Use the following sample data (10 random rows):
 ${JSON.stringify(plotSampleRows, null, 2)}`;
 
-        const completion = await this.openai.chat.completions.create({
-          messages: [
-            { role: "system", content: visualizationPrompt },
-            { role: "user", content: plotPrompt }
-          ],
-          model: "gpt-4o-mini",
-        });
+        let completion;
+        if (USE_PERPLEXITY) {
+          completion = await fetch('https://api.perplexity.ai/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: 'llama-3.1-sonar-large-128k-online',
+              messages: [
+                { role: "system", content: visualizationPrompt },
+                { role: "user", content: plotPrompt }
+              ]
+            })
+          }).then(res => res.json());
+        } else {
+          completion = await this.openai.chat.completions.create({
+            messages: [
+              { role: "system", content: visualizationPrompt },
+              { role: "user", content: plotPrompt }
+            ],
+            model: "gpt-4o-mini",
+          });
+        }
 
         const pythonCode = completion.choices[0].message.content.replace(/```python\n|```\n|```/g, '').trim();
         const plot_html = await this.executePythonCode(pythonCode, data);
@@ -380,19 +420,37 @@ ${JSON.stringify(plotSampleRows, null, 2)}`;
                 const plotPrompt = `Create a ${suggestion.plotType} visualization for the data.
                 The plot should be clear, informative, and properly labeled. The data should be correctly transformed for visual representation.
                 The axis should not just dole out the numbers, but they should be appropriately scaled and maintain the aspect ratio for visual clarity.
-                Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible but importantly keeping the visualization simplistic and not too complex and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data.
+                Create a visualization based on the user request. Take care of some empty value or other error cases in the code to avoid having errors. Use dark theme for plotly here. Take appropriate care of the expected range to be used for plot by taking note of the sample data and make the text appear properly and neatly in the plots. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible but importantly keeping the visualization simplistic and not too complex and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data.
                 For the data plot the: ${suggestion.description}
                 
                 Use the following sample data (10 random rows):
                 ${JSON.stringify(sampleRows, null, 2)}`; // Get suggestions first
 
-                const completion = await this.openai.chat.completions.create({
-                    messages: [
+                let completion;
+                if (USE_PERPLEXITY) {
+                  completion = await fetch('https://api.perplexity.ai/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                      model: 'llama-3.1-sonar-large-128k-online',
+                      messages: [
                         { role: "system", content: visualizationPrompt },
                         { role: "user", content: plotPrompt }
+                      ]
+                    })
+                  }).then(res => res.json());
+                } else {
+                  completion = await this.openai.chat.completions.create({
+                    messages: [
+                      { role: "system", content: visualizationPrompt },
+                      { role: "user", content: plotPrompt }
                     ],
                     model: "gpt-4o-mini",
-                });
+                  });
+                }
 
                 const pythonCode = completion.choices[0].message.content
                     .replace(/```python\n|```\n|```/g, '')

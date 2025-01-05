@@ -21,6 +21,13 @@
           >
             <i class="fas fa-chart-line"></i>
           </div>
+          <div 
+            class="nav-item" 
+            :class="{ active: currentPage === 'dashboard-generator' }"
+            @click="currentPage = 'dashboard-generator'"
+          >
+            <i class="fas fa-sliders"></i>
+          </div>
         </div>
       </div>
 
@@ -46,6 +53,10 @@
           ref="dataTable"
           @beforeDestroy="handleDataTableDestroy"
         />
+        <DashboardGenerator
+          v-if="currentPage === 'dashboard-generator'"
+          @generate-dashboard="handleDashboardGeneration"
+        />
       </div>
     </div>
   </div>
@@ -55,20 +66,23 @@
 import DataTable from './components/ChatClient.vue'
 import ChatAnalysisBoard from './components/ChatAnalysisBoard.vue'
 import AnalysisDashboard from './components/AnalysisDashboard.vue'
+import DashboardGenerator from './components/DashboardGenerator.vue'
 
 export default {
   name: 'App',
   components: {
     DataTable,
     ChatAnalysisBoard,
-    AnalysisDashboard
+    AnalysisDashboard,
+    DashboardGenerator
   },
   data() {
     return {
       currentPage: 'analysis-board',
       showAnalysisDashboard: false,
       analysisQuery: '',
-      analysisFile: null
+      analysisFile: null,
+      dashboardConfig: null
     }
   },
   methods: {
@@ -92,6 +106,12 @@ export default {
       if (this.$refs.dataTable) {
         this.$refs.dataTable.cleanup();
       }
+    },
+    handleDashboardGeneration(config) {
+      this.dashboardConfig = config;
+      this.currentPage = 'analysis-board';
+      this.showAnalysisDashboard = true;
+      // You can pass this config to AnalysisDashboard component as needed
     }
   },
   watch: {
