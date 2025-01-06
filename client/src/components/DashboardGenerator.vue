@@ -1,87 +1,99 @@
 <template>
-  <div class="dashboard-generator">
-    <h2>Dashboard Generator</h2>
-    
-    <!-- Basic Analysis Results
-    <div v-if="basicAnalysis" class="form-section">
-      <h3>Data Analysis</h3>
-      <div class="analysis-results">
-        <pre v-html="basicAnalysis"></pre>
-      </div>
-    </div> -->
+  <div class="dashboard-container">
+    <div class="content-wrapper">
+      <!-- Left Column: Generator Form -->
+      <div class="generator-column">
+        <div class="dashboard-generator">
+          <h2>Dashboard Generator</h2>
+          <div class="generator-form">
+            <!-- Data Source Section -->
+            <div class="form-section data-source-row">
+              <h3>Data Source</h3>
+              <div class="file-upload">
+                <input type="file" id="file-input" @change="handleFileSelect" accept=".csv,.json,.xlsx">
+                <label for="file-input" class="file-label">
+                  <i class="fas fa-cloud-upload-alt"></i>
+                  {{ config.file ? config.file.name : 'Choose a file' }}
+                </label>
+              </div>
+            </div>
 
-    <!-- Error Display
-    <div v-if="analysisError" class="error-message">
-      {{ analysisError }}
-    </div> -->
+            <!-- Visualization Description -->
+            <div class="form-section">
+              <h3>Visualization Description</h3>
+              <div class="text-input-group">
+                <textarea 
+                  v-model="config.visualizationDesc"
+                  placeholder="What kind of diagrams do you want? (e.g., line chart for sales over time)"
+                  rows="3"
+                ></textarea>
+              </div>
+            </div>
 
-    <!-- Loading State
-    <div v-if="isAnalyzing" class="loading-state">
-      <span>Analyzing data...</span>
-    </div>
- -->
-    <div class="generator-form">
-      <div class="form-section data-source-row">
-        <div class="data-source-header">
-          <h3>Data Source</h3>
-        </div>
-        <div class="file-upload">
-          <input type="file" id="file-input" @change="handleFileSelect" accept=".csv,.json,.xlsx">
-          <label for="file-input" class="file-label">
-            <i class="fas fa-cloud-upload-alt"></i>
-            {{ config.file ? config.file.name : 'Choose a file' }}
-          </label>
+            <!-- Analysis Level -->
+            <div class="form-section">
+              <h3>Analysis Level</h3>
+              <div class="analysis-level-buttons">
+                <button 
+                  v-for="level in ['Basic', 'Intermediate', 'Advanced']" 
+                  :key="level"
+                  :class="['level-btn', { active: config.analysisLevel === level.toLowerCase() }]"
+                  @click="config.analysisLevel = level.toLowerCase()"
+                >
+                  {{ level }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Theme Customization -->
+            <div class="form-section">
+              <h3>Theme <span class="optional-tag">Optional</span></h3>
+              <div class="text-input-group">
+                <textarea 
+                  v-model="config.themeDesc"
+                  placeholder="Describe your preferred theme (e.g., light theme with blue accents)"
+                  rows="2"
+                ></textarea>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-row">
+              <div class="insights-toggle">
+                <label class="toggle">
+                  <input type="checkbox" v-model="config.generateInsights">
+                  <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Generate Insights</span>
+              </div>
+              <button 
+                class="generate-btn" 
+                @click="generateDashboard" 
+                :disabled="isAnalyzing || !config.file"
+              >
+                {{ isAnalyzing ? 'Generating...' : 'Generate Dashboard' }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="form-section">
-        <h3>Visualization Description</h3>
-        <div class="text-input-group">
-          <textarea 
-            v-model="config.visualizationDesc"
-            placeholder="What kind of diagrams do you want? (e.g., line chart for sales over time, bar chart comparing categories)"
-            rows="4"
-          ></textarea>
+      <!-- Right Column: Dashboard Display -->
+      <div class="dashboard-column">
+        <!-- Loading State -->
+        <div v-if="isAnalyzing" class="loading-state">
+          <div class="loader"></div>
+          <span>Generating dashboard, please wait...</span>
         </div>
-      </div>
 
-      <div class="form-section">
-        <h3>Analysis Level</h3>
-        <div class="analysis-level-buttons">
-          <button 
-            v-for="level in ['Basic', 'Intermediate', 'Advanced']" 
-            :key="level"
-            :class="['level-btn', { active: config.analysisLevel === level.toLowerCase() }]"
-            @click="config.analysisLevel = level.toLowerCase()"
-          >
-            {{ level }}
-          </button>
-        </div>
-      </div>
-
-      <div class="form-section optional-section">
-        <h3>Theme Customization <span class="optional-tag">Optional</span></h3>
-        <div class="text-input-group">
-          <textarea 
-            v-model="config.themeDesc"
-            placeholder="Describe your preferred theme (e.g., dark theme with blue accents, corporate colors with white background)"
-            rows="3"
-          ></textarea>
-        </div>
-      </div>
-      <div class="action-row">
-        <div class="insights-toggle">
-          <label class="toggle">
-            <input type="checkbox" v-model="config.generateInsights">
-            <span class="slider"></span>
-          </label>
-          <span class="toggle-label">Generate Insights</span>
-        </div>
-        <div class="action-container">
-          <div v-if="isAnalyzing" class="loading-indicator"></div>
-          <button class="generate-btn" @click="generateDashboard" :disabled="isAnalyzing">
-            Generate Dashboard
-          </button>
+        <!-- Dashboard Display -->
+        <div v-if="dashboardComponents.length && !isAnalyzing" class="dashboard-display">
+          <div class="dashboard-header">
+            <h2>Generated Dashboard</h2>
+          </div>
+          <div class="gridstack-wrapper">
+            <div class="grid-stack"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -91,6 +103,10 @@
 <script>
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+import 'gridstack/dist/gridstack.min.css';
+import { GridStack } from 'gridstack';
+import Plotly from 'plotly.js-dist';
+//import _ from 'lodash';
 
 export default {
   name: 'DashboardGenerator',
@@ -107,7 +123,12 @@ export default {
       basicAnalysis: null,
       isAnalyzing: false,
       analysisError: null,
+      dashboardComponents: [],
+      grid: null,
     }
+  },
+  mounted() {
+    this.initializeGridStack();
   },
   methods: {
     async handleFileSelect(event) {
@@ -211,13 +232,134 @@ export default {
       });
     },
 
+    initializeGridStack() {
+      this.$nextTick(() => {
+        const gridElement = document.querySelector('.grid-stack');
+        if (gridElement) {
+          this.grid = GridStack.init({
+            column: 12,
+            cellHeight: 50,
+            float: true,
+            animate: true,
+            minRow: 1,
+            draggable: {
+              handle: '.chart-title',
+              scroll: true
+            },
+            resizable: {
+              handles: 'all',
+              autoHide: true
+            },
+            disableOneColumnMode: true,
+            margin: 10
+          });
+        }
+      });
+    },
+
+    createChartWidget(component, index) {
+      const widgetContainer = document.createElement('div');
+      widgetContainer.className = 'grid-stack-item';
+      widgetContainer.innerHTML = `
+        <div class="grid-stack-item-content">
+          <div class="chart-title">${component.description}</div>
+          <div id="chart-container-${index}" class="chart-container"></div>
+        </div>
+      `;
+
+      // Add widget to grid with size configuration
+      const gridItem = this.grid.addWidget({
+        w: 6,
+        h: 6,
+        el: widgetContainer
+      });
+
+      // Store reference to container for resizing
+      gridItem.plotContainer = widgetContainer.querySelector('.chart-container');
+
+      return gridItem;
+    },
+
+    renderCharts() {
+      this.$nextTick(() => {
+        // Ensure grid is initialized
+        if (!this.grid) {
+          this.initializeGridStack();
+        }
+
+        // Wait for grid initialization
+        setTimeout(() => {
+          if (this.grid) {
+            // Clear existing widgets
+            this.grid.removeAll();
+
+            // Create and add new widgets
+            this.dashboardComponents.forEach((component, index) => {
+              const gridItem = this.createChartWidget(component, index);
+
+              // Configure and render Plotly chart
+              const container = gridItem.plotContainer;
+              const defaultLayout = {
+                margin: { t: 25, r: 10, l: 60, b: 40 },
+                autosize: true,
+                showlegend: true,
+                legend: {
+                  orientation: 'h',
+                  y: -0.15
+                },
+                paper_bgcolor: 'white',
+                plot_bgcolor: 'white',
+                font: {
+                  color: '#2c3e50',
+                  family: 'Arial, sans-serif'
+                },
+                modebar: {
+                  activecolor: '#3b82f6'
+                }
+              };
+
+              const defaultConfig = {
+                responsive: true,
+                useResizeHandler: true,
+                displayModeBar: 'hover',
+                editable: true,
+                editSelection: true,
+                displaylogo: false,
+                modeBarButtonsToAdd: [
+                  'drawline',
+                  'drawopenpath',
+                  'eraseshape',
+                  'editInChartStudio'
+                ],
+                modeBarButtonsToRemove: ['lasso2d'],
+                toImageButtonOptions: {
+                  format: 'png',
+                  filename: 'chart',
+                  height: 500,
+                  width: 700,
+                  scale: 2
+                }
+              };
+
+              Plotly.newPlot(
+                container,
+                component.content.data,
+                { ...defaultLayout, ...component.content.layout },
+                defaultConfig
+              );
+            });
+          }
+        }, 100);
+      });
+    },
+
     async generateDashboard() {
       if (!this.processedData || !this.basicAnalysis) {
         this.analysisError = 'Please upload data and wait for analysis to complete';
         return;
       }
 
-      this.isAnalyzing = true;
+      this.isAnalyzing = true; // Show loading state
       this.analysisError = null;
 
       try {
@@ -245,410 +387,255 @@ export default {
           config: this.config
         });
 
-        // Emit the generated dashboard components
-        this.$emit('dashboard-generated', {
-          analysis: this.basicAnalysis,
-          components: dashboardResponse.data.components
-        });
+        // Clear existing dashboard
+        if (this.grid) {
+          this.grid.removeAll();
+        }
+
+        // Store components and create widgets
+        this.dashboardComponents = dashboardResponse.data.components;
+        this.renderCharts(); // Call to render charts after receiving components
 
       } catch (error) {
         this.analysisError = error.response?.data?.error || 'Error generating dashboard';
         console.error('Dashboard generation error:', error);
       } finally {
-        this.isAnalyzing = false;
+        this.isAnalyzing = false; // Hide loading state
       }
-    }
+    },
   }
 }
 </script>
 
 <style scoped>
-.dashboard-generator {
-  margin: 10px;
-  height: 100%;
-  overflow-y: auto;
-  background: #1a1a1a;
-  color: #e0e0e0;
+.dashboard-container {
+  height: 100vh;
+  background: #f5f5f5;
+  overflow: hidden;
+}
+
+.content-wrapper {
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  height: 100%;
+  gap: 20px;
+  padding: 20px;
 }
 
-.generator-form {
-  max-width: 800px;
-  width: 100%;
-  margin: 0 auto;
-  background: #2a2a2a;
-  padding: 24px;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+.generator-column {
+  flex: 0 0 350px;
+  overflow-y: auto;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  padding: 16px;
 }
 
-h2 {
-  text-align: center;
-  color: #ffffff;
-  margin-bottom: 24px;
-  font-size: 1.8em;
+.dashboard-column {
+  flex: 1;
+  overflow: hidden;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .form-section {
-  margin-bottom: 24px;
+  background: #ffffff;
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 16px;
 }
 
-.form-section h3 {
-  margin-bottom: 12px;
-  color: #ffffff;
-  font-size: 1.2em;
+h2 {
+  color: #1a202c;
+  font-size: 1.5em;
+  margin-bottom: 20px;
+  font-weight: 600;
 }
 
-.data-source-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.data-source-header {
-  min-width: 120px;
-}
-
-.file-upload {
-  flex: 1;
-}
-
-.file-upload input[type="file"] {
-  display: none;
-}
-
-.file-label {
-  display: block;
-  padding: 3px 6px;
-  background: #333333;
-  border: 2px dashed #4a4a4a;
-  border-radius: 8px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  color: #e0e0e0;
-}
-
-.file-label:hover {
-  border-color: #007bff;
-  background: #383838;
+h3 {
+  color: #2d3748;
+  font-size: 1em;
+  margin-bottom: 8px;
+  font-weight: 500;
 }
 
 .text-input-group textarea {
   width: 100%;
-  padding: 8px;
-  border: 1px solid #4a4a4a;
-  border-radius: 2px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
   font-size: 14px;
+  color: #4a5568;
+  background: #f8fafc;
   resize: vertical;
-  background: #333333;
-  color: #e0e0e0;
-  min-height: 40px;
 }
 
 .text-input-group textarea::placeholder {
-  color: #888888;
+  color: #a0aec0;
 }
 
-.helper-text {
+.file-label {
   display: block;
-  margin-top: 8px;
-  color: #888888;
-  font-size: 12px;
+  padding: 10px;
+  background: #f1f5f9;
+  border: 2px dashed #cbd5e1;
+  border-radius: 6px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 0.9em;
+  color: #4a5568;
 }
 
 .analysis-level-buttons {
   display: flex;
-  gap: 0;
-  margin-bottom: 12px;
-  height: 30px;
+  gap: 6px;
 }
 
 .level-btn {
-  flex: 1;
-  padding: 3px 50px;
-  border: 1px solid #4a4a4a;
-  background: #333333;
+  background: #f8fafc;
+  color: #4a5568;
+  border: 1px solid #e2e8f0;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.9em;
   cursor: pointer;
-  transition: all 0.3s ease;
-  color: #e0e0e0;
-}
-
-.level-btn:first-child {
-  border-radius: 3px 0 0 3px;
-}
-
-.level-btn:last-child {
-  border-radius: 0 3px 3px 0;
+  transition: all 0.2s;
 }
 
 .level-btn.active {
-  background: #007bff;
-  color: #ffffff;
-  border-color: #007bff;
-}
-
-.insights-toggle {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.toggle {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-
-.toggle input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: #4a4a4a;
-  transition: .4s;
-  border-radius: 34px;
-}
-
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 4px;
-  bottom: 4px;
-  background-color: white;
-  transition: .4s;
-  border-radius: 50%;
-}
-
-input:checked + .slider {
-  background-color: #007bff;
-}
-
-input:checked + .slider:before {
-  transform: translateX(18px);
-}
-
-.optional-section {
-  opacity: 0.7;
-}
-
-.optional-tag {
-  font-size: 12px;
-  background: #333333;
-  padding: 2px 8px;
-  border-radius: 5px;
-  margin-left: 8px;
-  color: #888888;
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
 }
 
 .generate-btn {
-  width: 100%;
-  background: #007bff;
+  background: #3b82f6;
   color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
   border: none;
-  padding: 8px 12px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 15px;
+  font-size: 0.9em;
   font-weight: 500;
-  transition: all 0.3s ease;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
 .generate-btn:hover {
-  background: #0056b3;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 123, 255, 0.2);
+  background: #2563eb;
 }
 
-/* Animations */
-.level-btn {
-  position: relative;
+.generate-btn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.toggle {
+  width: 36px;
+  height: 20px;
+}
+
+.slider:before {
+  height: 16px;
+  width: 16px;
+}
+
+.gridstack-wrapper {
+  height: 90vh;
+  overflow-y: auto;
+  margin: 0 auto;
+  background: #f5f5f5;
+  padding: 20px;
+}
+
+.grid-stack {
+  background: #f5f5f5;
+}
+
+.grid-stack-item-content {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  padding: 15px;
   overflow: hidden;
 }
 
-.level-btn::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  transition: width 0.6s, height 0.6s;
+.chart-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a202c;
+  padding: 8px;
+  margin: -12px -12px 12px -12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  cursor: move;
 }
 
-.level-btn:active::after {
-  width: 200px;
-  height: 200px;
-  opacity: 0;
+.chart-container {
+  width: 100%;
+  height: calc(100% - 30px);
 }
 
-/* Add some typography improvements */
-.text-input-group textarea,
-.helper-text,
-.toggle-label {
-  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-}
-
-/* Improve contrast for better readability */
-.toggle-label {
-  color: #e0e0e0;
-}
-
-/* Make the form sections more compact */
-.form-section + .form-section {
-  margin-top: -8px;
-}
-
-/* Improve visibility of optional sections */
-.optional-section {
-  position: relative;
-  padding-left: 8px;
-}
-
-.optional-section::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: #4a4a4a;
+/* Resize handle styling */
+.ui-resizable-handle {
+  background: #64748b;
   border-radius: 2px;
 }
-.action-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 24px;
+
+.ui-resizable-se {
+  width: 12px;
+  height: 12px;
+  right: -5px;
+  bottom: -5px;
 }
 
-.action-container {
+.loading-state {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 12px;
+  padding: 20px;
+  color: #4a5568;
 }
 
-.loading-indicator {
-  width: 20px;
-  height: 20px;
-  border: 2px solid #333;
-  border-top: 2px solid #007bff;
+.loader {
+  width: 30px;
+  height: 30px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #3b82f6;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.generate-btn {
-  padding: 8px 16px;
-  background: #007bff;
-  color: white;
-  border: none;
+.optional-tag {
+  font-size: 0.8em;
+  background: #f1f5f9;
+  color: #64748b;
+  padding: 2px 6px;
   border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.3s ease;
+  margin-left: 4px;
 }
 
-.generate-btn:disabled {
-  background: #666;
-  cursor: not-allowed;
+.generator-column::-webkit-scrollbar,
+.dashboard-column::-webkit-scrollbar {
+  width: 6px;
 }
 
-.generate-btn:hover:not(:disabled) {
-  background: #0056b3;
+.generator-column::-webkit-scrollbar-thumb,
+.dashboard-column::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
 }
 
-/* Remove loading state styles */
-.loading-state {
-  display: none;
-}
-
-.insights-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toggle {
-  position: relative;
-  display: inline-block;
-  width: 44px;
-  height: 24px;
-}
-/* Add subtle hover states */
-.text-input-group textarea:focus {
-  border-color: #007bff;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.2);
-}
-
-.analysis-results {
-  background: #333333;
-  padding: 16px;
-  border-radius: 8px;
-  margin-bottom: 20px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.analysis-results pre {
-  color: #e0e0e0;
-  font-family: 'Courier New', monospace;
-  white-space: pre-wrap;
-  margin: 0;
-}
-
-.error-message {
-  color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.1);
-  padding: 12px;
-  border-radius: 6px;
-  margin-bottom: 16px;
-}
-
-.loading-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  color: #e0e0e0;
-  background: #333333;
-  border-radius: 8px;
-  margin-bottom: 16px;
-}
-
-/* Improve visibility of analysis section */
-.form-section h3 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.form-section h3::before {
-  content: '';
-  width: 4px;
-  height: 16px;
-  background: #007bff;
-  border-radius: 2px;
+@media (max-width: 1024px) {
+  .content-wrapper {
+    flex-direction: column;
+  }
+  
+  .generator-column {
+    flex: none;
+    width: 100%;
+  }
 }
 </style> 
