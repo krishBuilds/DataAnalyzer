@@ -1,6 +1,5 @@
-const { OpenAI } = require('openai');
+const LangModelRequestService = require('./services/LangModelRequestService');
 const _ = require('lodash');
-//const dfd = require('danfojs');
 
 const visualizationPrompt = `You are a Plotly.js visualization expert. Given the following data and context, understand the table and help user in creating meaningful plot as mentioned in the visualization request. Provide ONLY the JavaScript implementation for data preprocessing and visualization creation.
 
@@ -51,32 +50,40 @@ Return format:
 }`;
 
 class DashboardGenerator {
-    constructor(openai) {
-        this.openai = openai;
+    constructor() {
+        this.langModelService = new LangModelRequestService();
     }
 
     async getVisualizationSuggestions(data, headers, analysis, config) {
         try {
-            const prompt = `Based on the following data analysis, suggest visualization methods for a dashboard.
+            const sampleData = this.getRandomSampleRows(data, [], 5);
+            
+            const systemPrompt = `You are a data visualization expert. Focus on:
+            1. Clear, meaningful visualizations that match the data types 
+            2. Interactive features where appropriate
+            3. Proper error handling
+            4. Consistent theme with dark background
+            5. User-friendly tooltips and legends
+            6. The suggestions can be based on data modification as well, as we have libraries to modify data, so suggest visualizations that are meaningful, based on analysis and would look good in a plot. Don't shy away from data manipulation techniques
+            7. Return ONLY valid JSON in the specified format`;
+            
+            const userPrompt = `Based on the following data analysis and sample data, suggest visualization methods for a dashboard.
             Each suggestion should include a clear description and visualization type.
             
             Data Analysis:
             ${JSON.stringify(analysis, null, 2)}
             
+            Sample Data (10 rows):
+            ${JSON.stringify(sampleData, null, 2)}
+            
             Data Headers: ${JSON.stringify(headers)}
+            
             User Requirements:
             - Visualization Type: ${config.visualizationDesc || 'Any appropriate visualizations'}
             - Analysis Level: ${config.analysisLevel || 'basic'}
             - Theme: ${config.themeDesc || 'Default dark theme'}
             
-            Focus on:
-            1. Clear, meaningful visualizations that match the data types
-            2. Interactive features where appropriate
-            3. Proper error handling
-            4. Consistent theme with dark background
-            5. User-friendly tooltips and legends
-            
-            Return suggestions in format:
+            Return ONLY a valid JSON object in this exact format:
             {
               "suggestions": [
                 {
@@ -88,43 +95,43 @@ class DashboardGenerator {
               ]
             }`;
 
-            const completion = await this.openai.chat.completions.create({
-                messages: [
-                    { role: "system", content: "You are a data visualization expert. Provide clear, practical visualization suggestions based on the data analysis." },
-                    { role: "user", content: prompt }
-                ],
-                model: "gpt-4o-mini",
-                temperature: 0.7
-            });
-
-            return JSON.parse(completion.choices[0].message.content.replace(/```json\n|```\n|```/g, '').trim());
+            const response = await this.langModelService.getVisualizationSuggestions(userPrompt, systemPrompt);
+            
+            // Validate JSON response
+            try {
+                const parsedResponse = JSON.parse(response.replace(/```json\n|```\n|```/g, '').trim());
+                if (!parsedResponse.suggestions || !Array.isArray(parsedResponse.suggestions)) {
+                    throw new Error('Invalid response format');
+                }
+                return parsedResponse;
+            } catch (parseError) {
+                console.error('Error parsing visualization suggestions:', parseError);
+                throw new Error('Failed to parse visualization suggestions response');
+            }
         } catch (error) {
             console.error('Error getting visualization suggestions:', error);
             throw new Error(`Failed to generate visualization suggestions: ${error.message}`);
         }
     }
 
+
     async generateMethods(suggestion, analysis, sampleData) {
         try {
-            const prompt = visualizationPrompt
+            const systemPrompt = `You are a Plotly.js expert. Provide production-ready JavaScript code that:
+            1. Handles data preprocessing effectively
+            2. Creates responsive visualizations
+            3. Implements proper error handling
+            4. Uses consistent styling
+            5. Doesn't have error "Failed to generate visualization methods: Unexpected token 'const'"`;
+
+            const userPrompt = visualizationPrompt
                 .replace('{description}', suggestion.description)
                 .replace('{sampleData}', JSON.stringify(sampleData, null, 2));
 
-            const completion = await this.openai.chat.completions.create({
-                messages: [
-                    { role: "system", content: "You are a Plotly.js visualization expert. Provide properly formatted JavaScript code." },
-                    { role: "user", content: prompt }
-                ],
-                model: "gpt-4o-mini",
-            });
-
-            // Parse the response and evaluate it to get the methods
-            const methodsCode = completion.choices[0].message.content
-                .replace(/```javascript\n|```\n|```/g, '').trim();
+            const response = await this.langModelService.generateVisualizationMethods(userPrompt, systemPrompt);
+            const methodsCode = response.replace(/```javascript\n|```\n|```/g, '').trim();
             
-            // Safely evaluate the code to get the methods object
-            const methods = eval(`(${methodsCode})`);
-            return methods;
+            return eval(`(${methodsCode})`);
         } catch (error) {
             console.error('Error generating methods:', error);
             throw new Error(`Failed to generate visualization methods: ${error.message}`);
@@ -135,29 +142,51 @@ class DashboardGenerator {
         const components = [];
         const sampleData = this.getRandomSampleRows(data, [], 5);
         
-        for (const suggestion of suggestions) {
-            try {
-                const methods = await this.generateMethods(suggestion, analysis, sampleData);
-                
-                // Process the data
-                const processedData = methods.preprocessData(data);
-                
-                // Create the visualization
-                const plotlyConfig = methods.createVisualization(processedData, suggestion.config || {});
+        try {
+            // Generate all methods in parallel
+            const methodPromises = suggestions.map(suggestion => 
+                this.generateMethods(suggestion, analysis, sampleData)
+                    .then(methods => ({
+                        methods,
+                        suggestion,
+                        success: true
+                    }))
+                    .catch(error => ({
+                        error,
+                        suggestion,
+                        success: false
+                    }))
+            );
 
-                components.push({
-                    type: suggestion.type,
-               
-                    priority: suggestion.priority,
-                    description: suggestion.description,
-                    content: plotlyConfig
-                });
-            } catch (error) {
-                console.error(`Error generating component:`, error);
-            }
+            // Wait for all promises to resolve
+            const results = await Promise.all(methodPromises);
+
+            // Process results and create components
+            results.forEach(result => {
+                if (result.success) {
+                    try {
+                        const processedData = result.methods.preprocessData(data);
+                        const plotlyConfig = result.methods.createVisualization(processedData, result.suggestion.config || {});
+
+                        components.push({
+                            type: result.suggestion.type,
+                            priority: result.suggestion.priority,
+                            description: result.suggestion.description,
+                            content: plotlyConfig
+                        });
+                    } catch (error) {
+                        console.error(`Error processing component:`, error);
+                    }
+                } else {
+                    console.error(`Error generating component for ${result.suggestion.type}:`, result.error);
+                }
+            });
+            
+            return components.sort((a, b) => b.priority - a.priority);
+        } catch (error) {
+            console.error('Error in parallel processing:', error);
+            throw error;
         }
-        
-        return components.sort((a, b) => b.priority - a.priority);
     }
 
     getRandomSampleRows(data, selectedIndices = [], totalSamples = 10) {
