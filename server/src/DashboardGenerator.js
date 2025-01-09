@@ -122,7 +122,8 @@ class DashboardGenerator {
             2. Creates responsive visualizations
             3. Implements proper error handling
             4. Uses consistent styling
-            5. Doesn't have error "Failed to generate visualization methods: Unexpected token 'const'"`;
+            5. Doesn't have error "Failed to generate visualization methods: Unexpected token 'const'"
+            6. Use accurate valid syntax and methods`;
 
             const userPrompt = visualizationPrompt
                 .replace('{description}', suggestion.description)

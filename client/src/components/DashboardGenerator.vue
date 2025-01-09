@@ -104,7 +104,11 @@
                   @click="generateDashboard" 
                   :disabled="!canGenerateDashboard"
                 >
-                  {{ isGenerating ? 'Generating...' : 'Generate Dashboard' }}
+                  <span v-if="!isGenerating">Generate Dashboard</span>
+                  <div v-else class="loading-spinner">
+                    <div class="spinner"></div>
+                    <span>Generating...</span>
+                  </div>
                 </button>
               </div>
             </div>
@@ -122,6 +126,7 @@ import 'gridstack/dist/gridstack.min.css';
 import { GridStack } from 'gridstack';
 import Plotly from 'plotly.js-dist';
 import { debounce } from 'lodash';
+//simport _ from 'lodash';
 
 export default {
   name: 'DashboardGenerator',
@@ -267,11 +272,16 @@ export default {
               handle: '.grid-stack-item-content'
             },
             resizable: {
-              handles: 'all',
-              autoHide: false
+              handles: 'all'
             },
-            disableOneColumnMode: true,
             margin: 8
+          });
+
+          // Add resize handler for grid
+          this.grid.on('resizestop', (event, element) => {
+            if (element.plotContainer) {
+              Plotly.Plots.resize(element.plotContainer);
+            }
           });
         }
       });
@@ -282,42 +292,43 @@ export default {
       widgetContainer.className = 'grid-stack-item';
       widgetContainer.innerHTML = `
         <div class="grid-stack-item-content">
+          <div class="chart-title">${component.title || ''}</div>
           <div id="chart-container-${index}" class="chart-container"></div>
         </div>
       `;
 
-      // Add widget to grid with default size
       const gridItem = this.grid.addWidget({
-        w: 6,
-        h: 6,
+        w: component.size?.w || 6,
+        h: component.size?.h || 6,
         autoPosition: true,
-        el: widgetContainer
+        el: widgetContainer,
+        minW: 3,
+        minH: 4
       });
 
       const container = widgetContainer.querySelector('.chart-container');
-      gridItem.plotContainer = container;
 
-      // Wait for container to be mounted before adding resize observer
-      this.$nextTick(() => {
-        // Only add resize observer if container is mounted
-        if (container && document.body.contains(container)) {
-          const resizeObserver = new ResizeObserver(entries => {
-            for (const entry of entries) {
-              if (entry.target === container && document.body.contains(container)) {
-                try {
-                  Plotly.Plots.resize(container);
-                } catch (error) {
-                  console.warn('Resize error:', error);
-                }
-              }
+      // Create a more robust resize observer
+      const resizeObserver = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          if (entry.target === widgetContainer) {
+            if (gridItem.plotContainer) {
+              // Force a complete redraw on resize
+              const layout = {
+                ...component.content?.layout,
+                autosize: true,
+                width: entry.contentRect.width,
+                height: entry.contentRect.height - 40, // Subtract title height
+              };
+              Plotly.relayout(gridItem.plotContainer, layout);
             }
-          });
-
-          resizeObserver.observe(container);
-          // Store observer reference for cleanup
-          gridItem.resizeObserver = resizeObserver;
+          }
         }
       });
+      
+      resizeObserver.observe(widgetContainer);
+      gridItem.resizeObserver = resizeObserver;
+      gridItem.plotContainer = container;
 
       return gridItem;
     },
@@ -336,58 +347,35 @@ export default {
               const gridItem = this.createChartWidget(component, index);
               const container = gridItem.plotContainer;
 
-              const defaultLayout = {
+              const layout = {
                 autosize: true,
-                showlegend: true,
-                legend: {
-                  orientation: 'h',
-                  xanchor: 'center',
-                  y: -0.15,
-                  x: 0.5
+                showlegend: false,
+                paper_bgcolor: "white",
+                plot_bgcolor: "white",
+                margin: {
+                  l: 40,
+                  r: 30,
+                  b: 40,
+                  t: 50,
                 },
-                margin: { t: 10, r: 10, l: 40, b: 40 },
-                paper_bgcolor: 'white',
-                plot_bgcolor: 'white',
-                font: {
-                  color: '#2c3e50',
-                  family: 'Arial, sans-serif'
-                }
+                ...component.content?.layout,
+                width: container.clientWidth,
+                height: container.clientHeight
               };
 
-              const defaultConfig = {
-                responsive: true,
-                useResizeHandler: true, // Enable auto-resizing
-                displayModeBar: 'hover',
-                displaylogo: false,
-                scrollZoom: false // Disable scroll zoom to prevent conflicts
-              };
-
-              // Create the plot
               Plotly.newPlot(
                 container,
                 component.content.data,
-                { ...defaultLayout, ...component.content.layout },
-                defaultConfig
-              );
-
-              // Store reference for resizing
-              gridItem.plotContainer = container;
-            });
-
-            // Add resize event listener to grid
-            this.grid.on('resizestop', (event, element) => {
-              if (element.plotContainer) {
-                Plotly.Plots.resize(element.plotContainer);
-              }
-            });
-
-            // Add resize event listener to grid
-            this.grid.on('resize', (event, element) => {
-              if (element.plotContainer) {
-                requestAnimationFrame(() => {
-                  Plotly.Plots.resize(element.plotContainer);
-                });
-              }
+                layout,
+                {
+                  responsive: true,
+                  useResizeHandler: true,
+                  autosize: true
+                }
+              ).then(() => {
+                // Force an initial resize
+                Plotly.Plots.resize(container);
+              });
             });
           }
         }, 100);
@@ -517,14 +505,17 @@ export default {
   position: relative;
   height: 100vh;
   background: #f5f5f5;
-  overflow: hidden;
+  display: flex;
 }
 
 .dashboard-area {
-  height: auto;
-  min-height: 100vh;
+  flex: 1;
+  height: 100vh;
   padding: 20px;
-  overflow: visible;
+  background: #f5f5f5;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .dashboard-area.expanded {
@@ -678,24 +669,33 @@ h3 {
 }
 
 .generate-btn {
+  width: 80%;
+  max-width: 300px;
+  height: 48px;
   background: #3b82f6;
   color: white;
-  padding: 8px 16px;
-  border-radius: 6px;
   border: none;
-  font-size: 0.9em;
-  font-weight: 500;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 16px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
-.generate-btn:hover {
+.generate-btn:hover:not(:disabled) {
   background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
 .generate-btn:disabled {
-  background: #cbd5e1;
+  background: #94a3b8;
   cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .toggle {
@@ -709,20 +709,26 @@ h3 {
 }
 
 .gridstack-wrapper {
-  height: calc(100vh - 100px);
-  padding: 20px;
-  background: #f8fafc;
-  overflow: auto;
-  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  width: 100%;
 }
 
 .grid-stack {
-  background: transparent;
-  min-height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 .grid-stack-item-content {
-  background: white;
+  position: relative;
+  height: 100%;
+  width: 100%;
+  background: #fff;
+  border-radius: 8px;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   padding: 15px;
@@ -731,18 +737,22 @@ h3 {
   flex-direction: column;
 }
 
-.grid-stack-item-content:hover {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+.chart-title {
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  color: #333;
 }
 
 .chart-container {
-  width: 100%;
-  height: 100%;
-  min-height: 200px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  right: 15px;
+  bottom: 15px;
+  width: auto !important;
+  height: auto !important;
+  overflow: hidden;
 }
 
 .grid-stack-item-content:hover {
@@ -758,11 +768,6 @@ h3 {
   border-bottom: 1px solid #e2e8f0;
 }
 
-.chart-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #2c3e50;
-}
 
 .chart-controls {
   display: flex;
@@ -804,30 +809,6 @@ h3 {
   cursor: se-resize;
 }
 
-/* Custom scrollbar */
-.gridstack-wrapper::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.gridstack-wrapper::-webkit-scrollbar-track {
-  background: #f1f5f9;
-  border-radius: 8px;
-}
-
-.gridstack-wrapper::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 8px;
-  border: 2px solid #f1f5f9;
-}
-
-.gridstack-wrapper::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-.gridstack-wrapper::-webkit-scrollbar-corner {
-  background: #f1f5f9;
-}
 
 .loading-state {
   display: flex;
@@ -840,10 +821,10 @@ h3 {
 }
 
 .loader {
-  width: 30px;
-  height: 30px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #3b82f6;
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e2e8f0;
+  border-top: 4px solid #3b82f6;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -857,16 +838,6 @@ h3 {
   margin-left: 4px;
 }
 
-.generator-column::-webkit-scrollbar,
-.dashboard-column::-webkit-scrollbar {
-  width: 6px;
-}
-
-.generator-column::-webkit-scrollbar-thumb,
-.dashboard-column::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
 
 @media (max-width: 1024px) {
   .content-wrapper {
@@ -877,30 +848,6 @@ h3 {
     flex: none;
     width: 100%;
   }
-}
-
-/* Custom scrollbar styles for both areas */
-.dashboard-area::-webkit-scrollbar,
-.generator-column::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.dashboard-area::-webkit-scrollbar-track,
-.generator-column::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
-}
-
-.dashboard-area::-webkit-scrollbar-thumb,
-.generator-column::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-
-.dashboard-area::-webkit-scrollbar-thumb:hover,
-.generator-column::-webkit-scrollbar-thumb:hover {
-  background: #666;
 }
 
 /* Firefox scrollbar styles */
@@ -918,26 +865,6 @@ h3 {
 
 .generator-column {
   padding: 16px;
-}
-
-/* Ensure scrollbar styles are applied */
-.generator-scroll-container::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.generator-scroll-container::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
-}
-
-.generator-scroll-container::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-
-.generator-scroll-container::-webkit-scrollbar-thumb:hover {
-  background: #666;
 }
 
 /* Firefox scrollbar styles */
@@ -995,4 +922,89 @@ h3 {
   font-size: 14px;
   font-weight: 500;
 }
+
+/* Center align generate button */
+.action-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 0;
+  width: 100%;
+}
+
+/* Modern Loading Spinner */
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Dashboard area scrollbar */
+.dashboard-area {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+
+/* Insights toggle positioning */
+.insights-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 0 20px;
+}
+
+/* Update existing toggle switch styles */
+.toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.toggle-slider {
+  width: 44px;
+  height: 24px;
+}
+
+/* Loading state animation */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  gap: 16px;
+}
+
+.loader {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e2e8f0;
+  border-top: 4px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.grid-stack {
+  min-height: 100%;
+}
+
 </style> 
