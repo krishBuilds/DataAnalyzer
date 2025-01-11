@@ -350,14 +350,8 @@ export default {
               const layout = {
                 autosize: true,
                 showlegend: false,
-                paper_bgcolor: "white",
-                plot_bgcolor: "white",
-                margin: {
-                  l: 40,
-                  r: 30,
-                  b: 40,
-                  t: 50,
-                },
+                // paper_bgcolor: "white",
+                // plot_bgcolor: "white",
                 ...component.content?.layout,
                 width: container.clientWidth,
                 height: container.clientHeight
@@ -370,7 +364,8 @@ export default {
                 {
                   responsive: true,
                   useResizeHandler: true,
-                  autosize: true
+                  autosize: true,
+                  resize: true
                 }
               ).then(() => {
                 // Force an initial resize
@@ -709,10 +704,11 @@ h3 {
 }
 
 .gridstack-wrapper {
-  flex: 1;
-  min-height: 0;
+    overflow-y: auto;       /* enable vertical scrollbar */
+    height: 90vh;
   position: relative;
   width: 100%;
+  margin: 0 auto;         /* center horizontally, optional */
 }
 
 .grid-stack {
@@ -727,36 +723,37 @@ h3 {
   position: relative;
   height: 100%;
   width: 100%;
-  background: #fff;
-  border-radius: 8px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  padding: 15px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  padding: 20px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  transition: box-shadow 0.3s ease;
+}
+
+.grid-stack-item-content:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
 .chart-title {
   font-size: 16px;
-  font-weight: bold;
-  margin-bottom: 10px;
-  color: #333;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #2d3748;
+  padding: 0 4px;
 }
 
 .chart-container {
-  position: absolute;
-  top: 15px;
-  left: 15px;
-  right: 15px;
-  bottom: 15px;
-  width: auto !important;
-  height: auto !important;
-  overflow: hidden;
+  width: 100%;
+  height: calc(100% - 28px);
+  background: #ffffff;
+  border-radius: 8px;
 }
 
-.grid-stack-item-content:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+.grid-stack > .grid-stack-item > .grid-stack-item-content {
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .chart-header {
@@ -961,7 +958,6 @@ h3 {
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
-
 
 /* Insights toggle positioning */
 .insights-toggle {

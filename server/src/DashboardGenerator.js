@@ -65,7 +65,9 @@ class DashboardGenerator {
             4. Consistent theme with dark background
             5. User-friendly tooltips and legends
             6. The suggestions can be based on data modification as well, as we have libraries to modify data, so suggest visualizations that are meaningful, based on analysis and would look good in a plot. Don't shy away from data manipulation techniques
-            7. Return ONLY valid JSON in the specified format`;
+            7. Return ONLY valid JSON in the specified format
+            8. Mention about theme and colors in each suggestion
+            9. Based on the analysis, in the suggestion also mention about the previous analysis data and mention values that are relevant for that plot suggested. `;
             
             const userPrompt = `Based on the following data analysis and sample data, suggest visualization methods for a dashboard.
             Each suggestion should include a clear description and visualization type.
@@ -119,14 +121,15 @@ class DashboardGenerator {
         try {
             const systemPrompt = `You are a Plotly.js expert. Provide production-ready JavaScript code that:
             1. Handles data preprocessing effectively
-            2. Creates responsive visualizations
+            2. Creates responsive visualizations based on description
             3. Implements proper error handling
-            4. Uses consistent styling
+            4. Uses consistent styling and colors based on theme metioned
             5. Doesn't have error "Failed to generate visualization methods: Unexpected token 'const'"
-            6. Use accurate valid syntax and methods`;
+            6. Use accurate valid syntax and methods
+            7. Just return the method code and don't add any unnecessary token like ':' that might cause issue`;
 
             const userPrompt = visualizationPrompt
-                .replace('{description}', suggestion.description)
+                .replace('{description}', JSON.stringify(suggestion, null, 2))
                 .replace('{sampleData}', JSON.stringify(sampleData, null, 2));
 
             const response = await this.langModelService.generateVisualizationMethods(userPrompt, systemPrompt);

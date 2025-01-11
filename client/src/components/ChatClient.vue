@@ -114,8 +114,14 @@
         <div class="chat-messages" ref="chatMessages">
           <div v-for="(message, index) in chatMessages" 
                :key="index" 
-               :class="['message', message.type]">
-            <div class="message-text">{{ message.text }}</div>
+               :class="['message', message.type, { streaming: message.isStreaming }]">
+            <!-- For markdown messages -->
+            <div v-if="message.type === 'bot' && message.isMarkdown" 
+                 class="markdown-content"
+                 v-html="renderMarkdown(message.text)">
+            </div>
+            <!-- For regular text messages -->
+            <span v-else>{{ message.text }}</span>
             
             <!-- Add suggestions with checkboxes -->
             <div v-if="message.suggestions" class="suggestions-container">
@@ -193,11 +199,11 @@
 
               <!-- Code Block for Error -->
               <div v-if="message.error.code" class="code-block-container">
-                <div class="code-header" @click="toggleCode(index + '_error')">
+                <div class="code-header" @click="toggleCode(index)">
                   <span class="code-label">Error Code</span>
-                  <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index + '_error'] }">▼</span>
+                  <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index] }">▼</span>
                 </div>
-                <div class="code-block-wrapper" v-show="expandedCodes[index + '_error']">
+                <div class="code-block-wrapper" v-show="expandedCodes[index]">
                   <pre class="code-block"><code>{{ message.error.code }}</code></pre>
                 </div>
               </div>
@@ -282,6 +288,7 @@ import { HandsontableOperations } from '../operations/HandsontableOperations';
 import MonacoEditor from './MonacoEditor.vue';
 import ChatFlows from './ChatFlows.vue';  // Keep only this import for the component
 import chatFlowsManager from '../utils/ChatFlows';  // Keep only this import for the manager
+import { marked } from 'marked';
 
 // Register Handsontable modules
 registerAllModules();
@@ -352,6 +359,7 @@ export default {
       chatFlows: chatFlowsManager,
       showFlowsOverlay: false,
       isClosingOverlay: false,  // renamed from _isClosing
+      lastUserQuestion: '',
     }
   },
   created() {
@@ -620,7 +628,7 @@ export default {
     async sendMessage() {
       if (!this.userMessage.trim() || this.loading) return;
       
-      // Get 5 random rows from current data
+      this.lastUserQuestion = this.userMessage.trim();
       const sampleData = this.getSampleRows(5);
       
       const userMessage = {
@@ -708,6 +716,10 @@ export default {
       return await axios.post('/api/analyze', payload);
     },
 
+    renderMarkdown(text) {
+      return marked(text || '');
+    },
+
     async handleSuccessResponse(response) {
       try {
         if (response.data.data) {
@@ -716,24 +728,25 @@ export default {
             headers: this.gridOperations.getHeaders()
           });
           
-          // Update data through gridOperations with changedRows tracking
           const updatedData = this.gridOperations.updateFromServerResponse(response.data);
           await this.updateTableData(updatedData.data);
-          
-          // Track changed rows
           this.changedRows = updatedData.changedRows || [];
         }
 
-        // Create bot message with all possible properties
+        // First push code message if code exists
+        if (response.data.code) {
+          this.chatMessages.push({
+            type: 'bot',
+            code: response.data.code,
+            showCodeBlock: true
+          });
+        }
+
+        // Create the bot message for other content
         const botMessage = {
           type: 'bot',
-          text: response.data.analysis || 'Analysis completed'
+          text: response.data.analysis?.startsWith('{') ? '' : (response.data.analysis || 'Analysis completed')
         };
-
-        // Add code if present
-        if (response.data.code) {
-          botMessage.code = response.data.code;
-        }
 
         // Add plot HTML if present
         if (response.data.plot_html) {
@@ -744,10 +757,55 @@ export default {
         if (response.data.suggestions) {
           botMessage.suggestions = response.data.suggestions;
           botMessage.selectedSuggestions = response.data.suggestions.map(() => true);
-          botMessage.context = response.data.context; // Store original context
+          botMessage.context = response.data.context;
         }
 
-        this.chatMessages.push(botMessage);
+        // Only push message if it has content other than code
+        if (botMessage.plot_html || botMessage.suggestions || botMessage.text) {
+          this.chatMessages.push(botMessage);
+        }
+
+        // If it's a JSON analysis, add streaming response
+        if (response.data.analysis?.startsWith('{')) {
+          const streamingMessage = {
+            type: 'bot',
+            text: '',
+            isStreaming: true,
+            isMarkdown: true
+          };
+          
+          this.chatMessages.push(streamingMessage);
+
+          try {
+            await axios({
+              method: 'post',
+              url: '/api/stream-analysis',
+              data: {
+                analysis: response.data.analysis,
+                userQuestion: this.lastUserQuestion
+              },
+              responseType: 'text',
+              onDownloadProgress: (progressEvent) => {
+                const newText = progressEvent.event.target.response.slice(streamingMessage.text.length);
+                if (newText) {
+                  streamingMessage.text += newText;
+                  
+                  this.$nextTick(() => {
+                    if (this.$refs.chatMessages) {
+                      this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+                    }
+                  });
+                }
+              }
+            });
+          } catch (error) {
+            console.error('Streaming error:', error);
+            streamingMessage.text = '### Error\nFailed to process analysis';
+            streamingMessage.error = true;
+          } finally {
+            streamingMessage.isStreaming = false;
+          }
+        }
         
         // Update chat scroll position
         await nextTick();
@@ -757,7 +815,13 @@ export default {
         
         // Record bot message if recording is active
         if (this.isRecording) {
-          this.chatFlows.recordMessage(botMessage);
+          this.chatFlows.recordMessage({
+            type: 'bot',
+            text: response.data.analysis,
+            code: response.data.code,
+            plot_html: response.data.plot_html,
+            suggestions: response.data.suggestions
+          });
         }
       } catch (error) {
         console.error('Error in handleSuccessResponse:', error);
@@ -918,7 +982,6 @@ export default {
               data: {
                 error: {
                   message: error.response.data.error.message || error.response.data.error,
-                  //pythonError: error.response.data.error.pythonError,
                   code: error.response.data.error.code
                 }
               }
@@ -961,11 +1024,9 @@ export default {
 
     async handleCleaningResponse(response) {
       if (response.data.data) {
-        // Use the updateFromServerResponse method
         const updatedData = this.gridOperations.updateFromServerResponse(response.data);
         await this.updateTableData(updatedData.data);
         
-        // Add success message to chat
         this.chatMessages.push({
           type: 'bot',
           text: `Successfully applied cleaning operations. ${updatedData.changedRows?.length || 0} rows were modified.`,
@@ -982,7 +1043,6 @@ export default {
         text: 'An error occurred:',
         error: {
           message: error.response?.data?.error?.message || error.response?.data?.error || error.message,
-          //pythonError: error.response?.data?.error?.pythonError,
           code: error.response?.data?.error?.code
         }
       };
@@ -3361,5 +3421,282 @@ textarea {
 
 .close-btn:hover {
   background: #f5f5f5;
+}
+
+.message.bot.streaming {
+  position: relative;
+}
+
+.message.bot.streaming::after {
+  content: '▊';
+  display: inline-block;
+  color: #007bff;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Add these styles */
+.message.bot {
+  position: relative;
+  transition: opacity 0.3s ease;
+}
+
+.message.bot.streaming {
+  opacity: 0.8;
+}
+
+.message.bot.streaming::after {
+  content: '▊';
+  display: inline-block;
+  color: #007bff;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.chat-messages {
+  scroll-behavior: smooth;
+}
+
+/* Add styles for markdown content */
+:deep(.markdown-body) {
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+}
+
+:deep(.markdown-body pre) {
+  background: #282c34;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+:deep(.markdown-body code) {
+  background: rgba(0,0,0,0.05);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.message.bot.streaming {
+  opacity: 0.8;
+}
+
+.markdown-content {
+  padding: 8px;
+  background: transparent;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4),
+.markdown-content :deep(h5),
+.markdown-content :deep(h6) {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.markdown-content :deep(p) {
+  margin: 8px 0;
+}
+
+.markdown-content :deep(code) {
+  background: rgba(0,0,0,0.05);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: 'Fira Code', monospace;
+}
+
+.markdown-content :deep(pre) {
+  background: #282c34;
+  padding: 16px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.markdown-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.markdown-content :deep(blockquote) {
+  border-left: 4px solid #ddd;
+  margin: 8px 0;
+  padding: 8px 16px;
+  color: #666;
+}
+
+.markdown-content {
+  padding: 12px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+  color: inherit;
+}
+
+.markdown-content :deep(*) {
+  color: inherit;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4),
+.markdown-content :deep(h5),
+.markdown-content :deep(h6) {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.markdown-content :deep(p) {
+  margin: 8px 0;
+  color: inherit;
+}
+
+.markdown-content :deep(code) {
+  background: rgba(0,0,0,0.05);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-content :deep(pre) {
+  background: #282c34;
+  padding: 16px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.markdown-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: #abb2bf;
+}
+
+.markdown-content :deep(ul),
+.markdown-content :deep(ol) {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.markdown-content :deep(li) {
+  margin: 4px 0;
+}
+
+.markdown-content :deep(blockquote) {
+  border-left: 4px solid #ddd;
+  margin: 12px 0;
+  padding: 8px 16px;
+  background: rgba(0,0,0,0.03);
+}
+
+.message.bot.streaming {
+  opacity: 0.8;
+}
+
+.message.bot.streaming::after {
+  content: '▊';
+  display: inline-block;
+  color: #007bff;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.chat-messages {
+  scroll-behavior: smooth;
+}
+
+.markdown-content {
+  padding: 12px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+  color: inherit;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4),
+.markdown-content :deep(h5),
+.markdown-content :deep(h6) {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.markdown-content :deep(p) {
+  margin: 8px 0;
+  color: inherit;
+}
+
+.markdown-content :deep(code) {
+  background: rgba(0,0,0,0.05);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-content :deep(pre) {
+  background: #282c34;
+  padding: 16px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.markdown-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: #abb2bf;
+}
+
+.message.bot.streaming {
+  opacity: 0.8;
+}
+
+/* Add the blinking cursor for streaming messages */
+.message.bot.streaming::after {
+  content: '▊';
+  display: inline-block;
+  color: #007bff;
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 </style>
