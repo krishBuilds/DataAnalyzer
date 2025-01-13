@@ -656,17 +656,38 @@ app.post('/api/suggest-header', async (req, res) => {
       });
     }
 
-    // Get sample data for header suggestion
-    const sampleData = data.slice(0, 5);
+    // Get sample data and statistics for better context
+    const sampleData = data.slice(0, 4);
     const headers = Object.keys(sampleData[0] || {});
+    const numericColumns = headers.filter(header => 
+      typeof sampleData[0][header] === 'number'
+    );
+    
+    const dateColumns = headers.filter(header => 
+      !isNaN(Date.parse(sampleData[0][header]))
+    );
 
-    const systemPrompt = `You are a data analysis assistant. Based on the table structure and sample data, suggest a clear and concise header/title for this dataset. Keep it short and professional.`;
-    const userPrompt = `
-Table Headers: ${JSON.stringify(headers)}
-Sample Data: ${JSON.stringify(sampleData, null, 2)}
-File Name: ${fileName || 'Untitled'}
+    const systemPrompt = `You are a data analysis assistant. Generate a clear, professional, and concise title for this dataset.
+The title should:
+1. Be descriptive but concise (under 60 characters)
+2. Reflect the main subject matter of the data
+3. Use proper capitalization
+4. Be professional and clear
+5. Not include the file name itself
+6. Focus on the content, not the format`;
 
-Suggest a clear, professional title for this dataset that describes its content. Keep it under 60 characters.`;
+    const userPrompt = `Dataset Information:
+- Headers: ${JSON.stringify(headers)}
+- Number of Columns: ${headers.length}
+- Total Rows: ${data.length}
+- Numeric Columns: ${numericColumns.join(', ')}
+- Date Columns: ${dateColumns.join(', ')}
+- Original Filename: ${fileName || 'Untitled'}
+
+Sample Data:
+${JSON.stringify(sampleData, null, 2)}
+
+Generate a clear, professional title that describes this dataset's content.`;
 
     const completion = await openai.chat.completions.create({
       messages: [
@@ -678,7 +699,10 @@ Suggest a clear, professional title for this dataset that describes its content.
       max_tokens: 60
     });
 
-    const suggestedTitle = completion.choices[0].message.content.trim();
+    const suggestedTitle = completion.choices[0].message.content
+      .trim()
+      .replace(/^["']|["']$/g, ''); // Remove quotes if present
+
     res.json({ 
       title: suggestedTitle,
       stats: {

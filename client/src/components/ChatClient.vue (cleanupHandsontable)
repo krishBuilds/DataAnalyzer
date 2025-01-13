@@ -1,0 +1,40 @@
+async cleanupHandsontable() {
+  try {
+    // Clear all data first
+    if (this.gridOperations) {
+      this.gridOperations.clearData();
+    }
+
+    // Destroy Handsontable instance
+    if (this.$refs.hotTable?.hotInstance) {
+      const hot = this.$refs.hotTable.hotInstance;
+      if (hot && !hot.isDestroyed) {
+        // Remove all event listeners
+        hot.removeHook('afterChange');
+        hot.removeHook('afterSelection');
+        hot.removeHook('afterDeselect');
+        hot.removeHook('afterRender');
+        
+        // Destroy the instance
+        hot.destroy();
+        
+        // Clear the reference
+        this.$refs.hotTable.hotInstance = null;
+      }
+    }
+
+    // Clear all data structures
+    this.hotSettings = null;
+    this.tableData = [];
+    this.headers = [];
+    
+    this.chatMessages = [];
+    this.fileName = '';
+    this.dataTitle = null;
+
+    // Wait for Vue to process these changes
+    await this.$nextTick();
+  } catch (error) {
+    console.warn('Error during cleanup:', error);
+  }
+}

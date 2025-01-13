@@ -7,27 +7,24 @@ const fs = require('fs');
 class DataCleaningRequest {
   constructor(openai) {
     this.openai = openai;
-    this.chatHistory = []; // Store chat history
+    this.chatHistory = [];
   }
 
   estimateTokens(text) {
-    // GPT models typically use ~4 characters per token on average
     return Math.ceil(text.length / 4);
   }
 
   getOptimizedDataset(data) {
     const TARGET_TOKEN_LIMIT = 14000;
-    const BUFFER = 2000; // Buffer for system prompt and other content
+    const BUFFER = 2000;
     const AVAILABLE_TOKENS = TARGET_TOKEN_LIMIT - BUFFER;
-    
-    // First try with all data
+
     let processData = [...data];
     let jsonData = JSON.stringify(processData, null, 2);
     let estimatedTokens = this.estimateTokens(jsonData);
-    
+
     debug(`Initial estimated tokens: ${estimatedTokens} for ${processData.length} rows`);
 
-    // If under limit, use all data
     if (estimatedTokens <= AVAILABLE_TOKENS) {
       return {
         data: processData,
@@ -36,18 +33,16 @@ class DataCleaningRequest {
       };
     }
 
-    // If over limit, calculate rows needed based on average tokens per row
     const tokensPerRow = estimatedTokens / processData.length;
     const targetRows = Math.floor(AVAILABLE_TOKENS / tokensPerRow);
     const step = Math.ceil(data.length / targetRows);
-    
-    // Take evenly distributed samples
+
     processData = data.filter((_, index) => index % step === 0);
     jsonData = JSON.stringify(processData, null, 2);
     estimatedTokens = this.estimateTokens(jsonData);
-    
+
     debug(`Final optimization: ${processData.length} rows with ~${estimatedTokens} tokens`);
-    
+
     return {
       data: processData,
       tokenCount: estimatedTokens,
@@ -57,18 +52,15 @@ class DataCleaningRequest {
 
   cleanJsonResponse(response) {
     try {
-      // Remove markdown code blocks and find the JSON content
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        // Parse the matched JSON content
         return JSON.parse(jsonMatch[0]);
       }
-      
-      // If no JSON object found, create a structured response from the text
+
       const lines = response.split('\n')
         .map(line => line.trim())
         .filter(line => line && !line.startsWith('```'));
-      
+
       return {
         suggestions: lines.filter(line => 
           line.length > 0 && 
@@ -79,7 +71,6 @@ class DataCleaningRequest {
       };
     } catch (error) {
       debug('Error parsing response:', error);
-      // Fallback: Split by newlines and create suggestions array
       return {
         suggestions: [
           "Error parsing suggestions. Please try again.",
@@ -92,28 +83,56 @@ class DataCleaningRequest {
   async process(question, data, selectedIndices) {
     let pythonCode = '';
     try {
-      const systemPrompt = `You are a data cleaning assistant. Analyze the dataset and suggest improvements to make it clean and ready for analysis. Focus on data consistency, empty values, formatting, and overall quality, and misrepresentation that might have crept in the data. Also consider renaming the headers if in bad shape. Focus is to make the data cleaner and standardized, consider adding a new column in case there are lot of changes in a column such as for standardizing case. Make the table data clean. Its a sequence operation in python so take care of each step. Especially take care of number of columns when renaming.
+      const systemPrompt = `You are a data cleaning expert specializing in Python and pandas. Generate precise, efficient, and error-free code for data cleaning tasks.
 
-Return your suggestions in this exact format without any markdown:
+Key Requirements:
+1. Use ONLY pandas and basic Python libraries (no external packages)
+2. Handle ALL possible errors and edge cases
+3. Process operations sequentially and safely
+4. Validate data types before operations
+5. Include proper error messages
+6. Maintain data integrity
+7. Document each cleaning step
+8. Return the cleaned dataset in the original format
+
+Return format:
 {
   "suggestions": [
-    "suggestion 1",
-    "suggestion 2"
+    "Clear, specific cleaning step 1",
+    "Clear, specific cleaning step 2",
+    ...
   ]
 }`;
 
       const { data: processData, tokenCount, rowCount } = this.getOptimizedDataset(data);
 
-      const userPrompt = `Dataset Analysis Request:
-Total Rows in Dataset: ${data.length}
-Analyzing ${rowCount} rows (~${tokenCount} estimated tokens).
-Headers: ${JSON.stringify(Object.keys(data[0]))}
+      const userPrompt = `Analyze this dataset and provide specific cleaning steps:
+Dataset Info:
+- Total Rows: ${data.length}
+- Sample Size: ${rowCount} rows
+- Estimated Tokens: ${tokenCount}
+- Headers: ${JSON.stringify(Object.keys(data[0]))}
+
 Sample Data:
 ${JSON.stringify(processData, null, 2)}
 
-Question: ${question}
+User Question: ${question}
 
-Analyze this data and list specific cleaning steps needed. Return only the JSON object with suggestions.`;
+Guidelines:
+1. Focus on data quality and consistency
+2. Check for and handle:
+   - Missing values
+   - Inconsistent formats
+   - Data type mismatches
+   - Outliers
+   - Duplicate entries
+   - Invalid values
+3. Suggest specific column renamings if needed
+4. Recommend format standardization where applicable
+5. Identify and handle data type conversions
+6. Do above if they make sense and help in cleaning the data that user might be wanting for their data
+
+Return ONLY the JSON object with clear, actionable suggestions.`;
 
       const completion = await this.openai.chat.completions.create({
         messages: [
@@ -121,21 +140,15 @@ Analyze this data and list specific cleaning steps needed. Return only the JSON 
           { role: "user", content: userPrompt }
         ],
         model: "gpt-4o-mini",
-        temperature: 0.2,
+        temperature: 0.1,
         max_tokens: 1500
-      });
-
-      // Add assistant's response to chat history
-      this.chatHistory.push({
-        role: "assistant",
-        content: completion.choices[0].message.content
       });
 
       const suggestions = this.cleanJsonResponse(completion.choices[0].message.content);
 
       return {
         data: data,
-        analysis: "Here are the suggested cleaning steps:",
+        analysis: "Suggested cleaning steps:",
         suggestions: suggestions.suggestions
       };
 
@@ -150,167 +163,148 @@ Analyze this data and list specific cleaning steps needed. Return only the JSON 
 
   async executeCleaning(data, suggestions) {
     try {
-        // Initialize chat history if it doesn't exist
-        if (!this.chatHistory) {
-            this.chatHistory = [];
-        }
+      const systemPrompt = `You are a Python code generator. Generate ONLY the Python code without any explanations or markdown formatting. The code must:
+1. Start with imports
+2. Include the process_data function
+3. Include the main block
+4. NO explanatory text or markdown code blocks
+5. NO additional comments except for operation steps`;
 
-        const systemPrompt = `You are a Python programming assistant that generates complete, executable scripts.
-Your code must:
-1. Include necessary imports (pandas, json, sys)
-2. Start directly with imports - no description text
-3. Process the ENTIRE input dataset, not just the sample rows
-4. Include proper error handling
-5. Properly and carefully parse the data values based on the text format they are present
-6. Don't Use any unnecessary library
+      const userPrompt = `Write ONLY the Python code (no explanations) that implements these cleaning steps:
+${Array.isArray(suggestions) 
+  ? suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')
+  : suggestions}
 
-Example structure:
+Required code structure:
 import pandas as pd
 import json
 import sys
 
 def process_data(data):
-    # Convert input JSON to DataFrame
-    df = pd.DataFrame(data)
-    
-    # Your data processing code here
-    # Process the entire DataFrame, not just the sample
-    
-    return {
-        'data': df.to_dict('records'),
-    }
+    try:
+        df = pd.DataFrame(data)
+        if df.empty:
+            return {'error': 'Empty dataset', 'data': data}
+        
+        # cleaning operations here
+        
+        return {'data': df.to_dict('records')}
+    except Exception as e:
+        return {'error': str(e), 'data': data}
 
 if __name__ == "__main__":
     try:
-        # Read data from file instead of command line argument
-        with open(sys.argv[1], 'r', encoding='utf-8') as f:
-            input_data = json.load(f)
-        
+        input_data = json.load(sys.stdin)
         result = process_data(input_data)
         print(json.dumps(result))
     except Exception as e:
-        error_result = {
-            'error': str(e),
-            'data': []
-        }
-        print(json.dumps(error_result))`;
+        print(json.dumps({'error': str(e), 'data': []}))`;
 
-        // Add the execution request to chat history with proper structure
-        this.chatHistory.push(
-            { 
-                role: "user", 
-                content: `Generate Python code to implement these cleaning steps:\n${
-                    Array.isArray(suggestions) 
-                        ? suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')
-                        : suggestions
-                }\n\nThe code should follow the template structure and return the cleaned data in the specified format.`
+      const completion = await this.openai.chat.completions.create({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        model: "gpt-4o-mini",
+        temperature: 0.1
+      });
+
+      // Clean the response to ensure we only get Python code
+      let pythonCode = completion.choices[0].message.content;
+      
+      // Remove any markdown code blocks or explanatory text
+      pythonCode = pythonCode
+        .replace(/```python\n|```\n|```/g, '')
+        .trim()
+        .split('\n')
+        .filter(line => 
+          !line.toLowerCase().includes('here') && 
+          !line.toLowerCase().includes('python code') &&
+          !line.toLowerCase().includes('following') &&
+          line.trim() !== ''
+        )
+        .join('\n');
+
+      // Ensure the code starts with imports
+      if (!pythonCode.startsWith('import')) {
+        pythonCode = `import pandas as pd\nimport json\nimport sys\n\n${pythonCode}`;
+      }
+
+      const tempDir = path.join(__dirname, 'temp');
+      if (!fs.existsSync(tempDir)) {
+        await fsPromises.mkdir(tempDir, { recursive: true });
+      }
+
+      const tempDataPath = path.join(tempDir, `data_${Date.now()}.json`);
+      const tempScriptPath = path.join(tempDir, `script_${Date.now()}.py`);
+
+      await fsPromises.writeFile(tempDataPath, JSON.stringify(data), 'utf8');
+      await fsPromises.writeFile(tempScriptPath, pythonCode, 'utf8');
+
+      debug('Executing Python script:', {
+        scriptPath: tempScriptPath,
+        dataPath: tempDataPath
+      });
+
+      const pythonProcess = spawn('python', [tempScriptPath], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        encoding: 'utf8'
+      });
+
+      return new Promise((resolve, reject) => {
+        let processedData = '';
+        let errorData = '';
+
+        pythonProcess.stdin.write(JSON.stringify(data));
+        pythonProcess.stdin.end();
+
+        pythonProcess.stdout.on('data', (data) => {
+          processedData += data.toString('utf8');
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+          errorData += data.toString('utf8');
+          debug('Python stderr:', data.toString('utf8'));
+        });
+
+        pythonProcess.on('close', async (code) => {
+          try {
+            if (code !== 0) {
+              throw new Error(errorData || 'Python execution failed');
             }
-        );
 
-        const completion = await this.openai.chat.completions.create({
-            messages: [
-                ...this.chatHistory,
-                { role: "system", content: systemPrompt }
-            ],
-            model: "gpt-4o-mini",
-            temperature: 0.2
-        });
+            if (!processedData.trim()) {
+              throw new Error('No output from Python script');
+            }
 
-        // Add assistant's response to chat history
-        this.chatHistory.push({
-            role: "assistant",
-            content: completion.choices[0].message.content
-        });
+            const result = JSON.parse(processedData);
+            
+            if (result.error) {
+              throw new Error(result.error);
+            }
 
-        let pythonCode = completion.choices[0].message.content;
-        pythonCode = pythonCode.replace(/```python\n|```\n|```/g, '').trim();
-
-        // Ensure temp directory exists
-        const tempDir = path.join(__dirname, 'temp');
-        if (!fs.existsSync(tempDir)) {
-            await fsPromises.mkdir(tempDir, { recursive: true });
-        }
-
-        // Write data and script to temp files
-        const tempDataPath = path.join(tempDir, `data_${Date.now()}.json`);
-        const tempScriptPath = path.join(tempDir, `script_${Date.now()}.py`);
-
-        // Write data with proper encoding
-        await fsPromises.writeFile(tempDataPath, JSON.stringify(data), 'utf8');
-        await fsPromises.writeFile(tempScriptPath, pythonCode, 'utf8');
-
-        debug('Executing Python script:', {
-            scriptPath: tempScriptPath,
-            dataPath: tempDataPath
-        });
-
-        // Execute Python script with proper encoding
-        const pythonProcess = spawn('python', [tempScriptPath, tempDataPath], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            encoding: 'utf8'
-        });
-
-        return new Promise((resolve, reject) => {
-            let processedData = '';
-            let errorData = '';
-
-            pythonProcess.stdout.on('data', (data) => {
-                processedData += data.toString('utf8');
-                //debug('Python stdout:', data.toString('utf8'));
+            resolve({
+              data: result.data || data,
+              pythonCode,
+              suggestions
             });
-
-            pythonProcess.stderr.on('data', (data) => {
-                errorData += data.toString('utf8');
-                debug('Python stderr:', data.toString('utf8'));
+          } catch (error) {
+            reject({
+              error: error.message,
+              pythonError: errorData,
+              code: pythonCode
             });
-
-            pythonProcess.on('close', async (code) => {
-                try {
-                    if (code !== 0) {
-                        throw new Error(errorData || 'Python execution failed');
-                    }
-
-                    if (!processedData.trim()) {
-                        throw new Error('No output from Python script');
-                    }
-
-                    const sanitizedData = processedData.replace(/: NaN/g, ': "NaN"');
-                    let result;
-                    
-                    try {
-                        result = JSON.parse(sanitizedData);
-                    } catch (parseError) {
-                        debug('Error parsing Python output:', parseError);
-                        //debug('Raw output:', sanitizedData);
-                        throw new Error(`Failed to parse Python output: ${parseError.message}`);
-                    }
-
-                    if (result.error) {
-                        throw new Error(result.error);
-                    }
-
-                    resolve({
-                        data: result.data || data,
-                        pythonCode,
-                        suggestions
-                    });
-                } catch (error) {
-                    reject({
-                        error: error.message,
-                        pythonError: errorData,
-                        code: pythonCode
-                    });
-                }
-            });
+          }
         });
+      });
     } catch (error) {
-        throw {
-            error: error.message,
-            pythonError: error.pythonError,
-            code: error.code
-        };
+      throw {
+        error: error.message,
+        pythonError: error.pythonError,
+        code: error.code
+      };
     }
-}
+  }
 }
 
 module.exports = DataCleaningRequest; 

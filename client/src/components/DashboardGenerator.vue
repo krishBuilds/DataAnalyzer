@@ -4,7 +4,7 @@
     <div class="dashboard-area" :class="{ 'expanded': !showGenerator }">
       <!-- Dashboard Display -->
       <div class="dashboard-column">
-        <!-- Loading State - Only show when generating dashboard -->
+        <!-- Loading State -->
         <div v-if="isGenerating" class="loading-state">
           <div class="loader"></div>
           <span>Generating dashboard, please wait...</span>
@@ -19,6 +19,19 @@
             <div class="grid-stack"></div>
           </div>
         </div>
+
+        <!-- Additional Analyses (Non-Plotly) -->
+        <div v-if="nonPlotlyAnalyses.length && !isGenerating" class="analysis-section">
+          <h3>Additional Analyses</h3>
+          <div
+            class="analysis-block"
+            v-for="(analysis, i) in nonPlotlyAnalyses"
+            :key="i"
+          >
+            <h4>{{ analysis.title }}</h4>
+            <p>{{ analysis.content }}</p>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -27,7 +40,6 @@
       <div class="panel-toggle" @click="toggleGenerator">
         <i :class="['fas', showGenerator ? 'fa-chevron-left' : 'fa-chevron-right']"></i>
       </div>
-      <!-- Wrap generator content in a scrollable container -->
       <div class="generator-scroll-container">
         <div class="generator-column">
           <div class="dashboard-generator">
@@ -84,7 +96,7 @@
                 <div class="text-input-group">
                   <textarea 
                     v-model="config.themeDesc"
-                    placeholder="Describe your preferred theme (e.g., light theme with blue accents)"
+                    placeholder="Describe your preferred theme (e.g., light theme with green accents)"
                     rows="2"
                   ></textarea>
                 </div>
@@ -126,7 +138,6 @@ import 'gridstack/dist/gridstack.min.css';
 import { GridStack } from 'gridstack';
 import Plotly from 'plotly.js-dist';
 import { debounce } from 'lodash';
-//simport _ from 'lodash';
 
 export default {
   name: 'DashboardGenerator',
@@ -145,8 +156,10 @@ export default {
       isGenerating: false,
       analysisComplete: false,
       dashboardComponents: [],
+      nonPlotlyAnalyses: [], /* to store additional textual/numeric analyses not rendered on Plotly */
       grid: null,
       showGenerator: true,
+      dashboardHeader: 'My Dashboard',
     }
   },
   computed: {
@@ -162,9 +175,46 @@ export default {
              !this.isAnalyzing
     }
   },
+  async beforeMount() {
+    try {
+      // Clean up any existing Handsontable instances
+      const hotInstances = document.querySelectorAll('.handsontable');
+      for (const instance of hotInstances) {
+        if (instance.__handsontable) {
+          try {
+            const hot = instance.__handsontable;
+            // Remove all hooks
+            hot.removeHook('afterChange');
+            hot.removeHook('afterSelection');
+            hot.removeHook('afterDeselect');
+            hot.removeHook('afterRender');
+            // Destroy instance
+            hot.destroy();
+            // Clear reference
+            instance.__handsontable = null;
+          } catch (error) {
+            console.warn('Error cleaning up Handsontable instance:', error);
+          }
+        }
+      }
+
+      // Clear any remaining Handsontable global references
+      if (window.Handsontable) {
+        window.Handsontable.hooks.clear();
+      }
+
+      // Wait for cleanup to complete
+      await this.$nextTick();
+    } catch (error) {
+      console.error('Error in beforeMount cleanup:', error);
+    }
+  },
   mounted() {
-    this.initializeGridStack();
-    window.addEventListener('resize', this.handleResize);
+    // Initialize only after ensuring cleanup
+    this.$nextTick(() => {
+      this.initializeGridStack();
+      window.addEventListener('resize', this.handleResize);
+    });
   },
   beforeUnmount() {
     // Clean up resize observers
@@ -192,7 +242,6 @@ export default {
         await this.performBackgroundAnalysis();
       } catch (error) {
         console.error('File processing error:', error);
-        // Show error toast or notification instead of setting error state
       } finally {
         this.isAnalyzing = false;
       }
@@ -205,7 +254,6 @@ export default {
         reader.onload = (e) => {
           try {
             let data;
-            
             if (file.name.endsWith('.csv')) {
               // Parse CSV
               const text = e.target.result;
@@ -230,16 +278,13 @@ export default {
               throw new Error('Unsupported file format. Please use CSV or Excel files.');
             }
 
-            // Validate data structure
             if (!data || !data.length) {
               throw new Error('No data found in file');
             }
 
-            // Ensure all rows have the same structure
+            // Ensure consistent row structure
             const headers = Object.keys(data[0]);
-            data = data.filter(row => {
-              return Object.keys(row).length === headers.length;
-            });
+            data = data.filter(row => Object.keys(row).length === headers.length);
 
             resolve(data);
           } catch (error) {
@@ -274,12 +319,11 @@ export default {
             resizable: {
               handles: 'all'
             },
-            margin: 8
+            margin: 5
           });
 
-          // Add resize handler for grid
           this.grid.on('resizestop', (event, element) => {
-            if (element.plotContainer) {
+            if (element.plotContainer && document.body.contains(element.plotContainer)) {
               Plotly.Plots.resize(element.plotContainer);
             }
           });
@@ -290,6 +334,7 @@ export default {
     createChartWidget(component, index) {
       const widgetContainer = document.createElement('div');
       widgetContainer.className = 'grid-stack-item';
+      // Add title section above the chart
       widgetContainer.innerHTML = `
         <div class="grid-stack-item-content">
           <div class="chart-title">${component.title || ''}</div>
@@ -308,17 +353,15 @@ export default {
 
       const container = widgetContainer.querySelector('.chart-container');
 
-      // Create a more robust resize observer
       const resizeObserver = new ResizeObserver(entries => {
         for (const entry of entries) {
-          if (entry.target === widgetContainer) {
-            if (gridItem.plotContainer) {
-              // Force a complete redraw on resize
+          if (entry.target === widgetContainer && gridItem.plotContainer) {
+            if (document.body.contains(gridItem.plotContainer)) {
               const layout = {
                 ...component.content?.layout,
                 autosize: true,
                 width: entry.contentRect.width,
-                height: entry.contentRect.height - 40, // Subtract title height
+                height: entry.contentRect.height - 40
               };
               Plotly.relayout(gridItem.plotContainer, layout);
             }
@@ -350,8 +393,7 @@ export default {
               const layout = {
                 autosize: true,
                 showlegend: false,
-                // paper_bgcolor: "white",
-                // plot_bgcolor: "white",
+                title: component.title,
                 ...component.content?.layout,
                 width: container.clientWidth,
                 height: container.clientHeight
@@ -365,11 +407,14 @@ export default {
                   responsive: true,
                   useResizeHandler: true,
                   autosize: true,
-                  resize: true
+                  resize: true,
+                  editable: true
                 }
               ).then(() => {
-                // Force an initial resize
-                Plotly.Plots.resize(container);
+                // Only resize if it's still in DOM
+                if (document.body.contains(container)) {
+                  Plotly.Plots.resize(container);
+                }
               });
             });
           }
@@ -386,35 +431,27 @@ export default {
       this.analysisError = null;
 
       try {
+        // Cleanup from previous generation
         if (this.grid) {
-            // Get all grid items
-            const items = this.grid.getGridItems();
-            
-            // Clean up each item's observers and Plotly instances
-            items.forEach(item => {
-                if (item.plotContainer) {
-                    try {
-                        // Remove Plotly instance
-                        Plotly.purge(item.plotContainer);
-                    } catch (e) {
-                        console.warn('Error purging Plotly instance:', e);
-                    }
-                }
-                
-                // Disconnect resize observer
-                if (item.resizeObserver) {
-                    item.resizeObserver.disconnect();
-                }
-            });
-
-            // Remove all items from grid
-            this.grid.removeAll();
+          const items = this.grid.getGridItems();
+          items.forEach(item => {
+            if (item.plotContainer) {
+              try {
+                Plotly.purge(item.plotContainer);
+              } catch (e) {
+                console.warn('Error purging Plotly:', e);
+              }
+            }
+            if (item.resizeObserver) {
+              item.resizeObserver.disconnect();
+            }
+          });
+          this.grid.removeAll();
         }
-        
-        // Clear components array
         this.dashboardComponents = [];
+        this.nonPlotlyAnalyses = [];
 
-        // Get visualization suggestions using the analysis results
+        // 1. Get chart suggestions
         const suggestionsResponse = await axios.post('/api/dashboard/get-suggestions', {
           data: this.processedData,
           headers: Object.keys(this.processedData[0]),
@@ -430,7 +467,7 @@ export default {
           throw new Error('No visualization suggestions received');
         }
 
-        // Generate visualizations based on suggestions
+        // 2. Generate final chart objects + any textual analyses
         const dashboardResponse = await axios.post('/api/dashboard/generate-visualizations', {
           data: this.processedData,
           suggestions: suggestionsResponse.data.suggestions,
@@ -438,23 +475,19 @@ export default {
           config: this.config
         });
 
-        // Clear existing dashboard
-        if (this.grid) {
-          this.grid.removeAll();
-        }
-
-        // Store components and create widgets
         this.dashboardComponents = dashboardResponse.data.components;
-        this.renderCharts(); // Call to render charts after receiving components
+        // If the server returns additional textual/numeric analysis, capture it here:
+        this.nonPlotlyAnalyses = dashboardResponse.data.nonPlotlyAnalyses || [];
 
-        // Hide generator panel after successful dashboard generation
+        this.renderCharts();
+
+        // Optionally auto-hide generator panel
         this.showGenerator = false;
-
       } catch (error) {
         this.analysisError = error.response?.data?.error || 'Error generating dashboard';
         console.error('Dashboard generation error:', error);
       } finally {
-        this.isGenerating = false; // Hide loading state
+        this.isGenerating = false;
       }
     },
 
@@ -488,7 +521,6 @@ export default {
         this.analysisComplete = true;
       } catch (error) {
         console.error('Analysis error:', error);
-        // Show error toast or notification
       }
     }
   }
@@ -517,13 +549,14 @@ export default {
   margin-left: 0;
 }
 
+/* Generator Panel: White background, toggle on left, and softened green theme. */
 .generator-panel {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
   width: 350px;
-  background: white;
+  background: #ffffff;
   transition: transform 0.3s ease;
   z-index: 1000;
   box-shadow: 2px 0 8px rgba(0,0,0,0.1);
@@ -542,7 +575,7 @@ export default {
   transform: translateY(-50%);
   width: 30px;
   height: 60px;
-  background: white;
+  background: #ffffff;
   border-radius: 0 8px 8px 0;
   display: flex;
   align-items: center;
@@ -555,9 +588,13 @@ export default {
   background: #f8fafc;
 }
 
-.content-wrapper {
-  height: 100%;
-  padding: 20px;
+.generator-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  /* Soft green scrollbar color */
+  scrollbar-color: #bbf7d0 #f5f5f5;
 }
 
 .generator-column {
@@ -622,8 +659,8 @@ h3 {
 }
 
 .file-label:hover {
-  background: #f1f5f9;
-  border-color: #94a3b8;
+  background: #f1fdf4; /* subtle green tint */
+  border-color: #bbf7d0;
 }
 
 .file-label.analyzing {
@@ -634,7 +671,7 @@ h3 {
 }
 
 .file-label i {
-  color: #3b82f6;
+  color: #10b981; /* changed from the original blue to green */
 }
 
 .file-label.analyzing i {
@@ -658,16 +695,16 @@ h3 {
 }
 
 .level-btn.active {
-  background: #3b82f6;
+  background: #10b981;
   color: white;
-  border-color: #3b82f6;
+  border-color: #10b981;
 }
 
 .generate-btn {
   width: 80%;
   max-width: 300px;
   height: 48px;
-  background: #3b82f6;
+  background: #10b981; /* green button */
   color: white;
   border: none;
   border-radius: 8px;
@@ -682,9 +719,10 @@ h3 {
 }
 
 .generate-btn:hover:not(:disabled) {
-  background: #2563eb;
+  background: #059669; /* darker green on hover */
   transform: translateY(-1px);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+              0 2px 4px -1px rgba(0, 0, 0, 0.06);
 }
 
 .generate-btn:disabled {
@@ -693,22 +731,12 @@ h3 {
   opacity: 0.7;
 }
 
-.toggle {
-  width: 36px;
-  height: 20px;
-}
-
-.slider:before {
-  height: 16px;
-  width: 16px;
-}
-
 .gridstack-wrapper {
-    overflow-y: auto;       /* enable vertical scrollbar */
-    height: 90vh;
+  overflow-y: auto;
+  height: 90vh;
   position: relative;
   width: 100%;
-  margin: 0 auto;         /* center horizontally, optional */
+  margin: 0 auto;
 }
 
 .grid-stack {
@@ -717,16 +745,19 @@ h3 {
   left: 0;
   right: 0;
   bottom: 0;
+  min-height: 100%;
 }
 
+/* Plotly tile appearance */
 .grid-stack-item-content {
   position: relative;
   height: 100%;
   width: 100%;
   background: #ffffff;
   border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  padding: 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+              0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  padding: 5px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -734,79 +765,24 @@ h3 {
 }
 
 .grid-stack-item-content:hover {
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+              0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
-.chart-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #2d3748;
-  padding: 0 4px;
-}
-
+/* Make sure the chart fills the tile, and remove scrollbars from Plotly content. */
 .chart-container {
-  width: 100%;
-  height: calc(100% - 28px);
+  flex: 1;
+  height: 100%;
   background: #ffffff;
   border-radius: 8px;
+  overflow: hidden; /* Removes the scrollbar within each plot */
 }
 
 .grid-stack > .grid-stack-item > .grid-stack-item-content {
   border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
-.chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-
-.chart-controls {
-  display: flex;
-  gap: 8px;
-}
-
-.chart-control-btn {
-  background: transparent;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  color: #64748b;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-}
-
-.chart-control-btn:hover {
-  background: #e2e8f0;
-  color: #334155;
-}
-
-/* Resize handle styling */
-.grid-stack > .grid-stack-item > .ui-resizable-handle {
-  width: 14px;
-  height: 14px;
-  background: #64748b;
-  border-radius: 4px;
-  opacity: 0;
-  transition: all 0.2s ease;
-}
-
-.grid-stack > .grid-stack-item:hover > .ui-resizable-handle {
-  opacity: 0.4;
-}
-
-.grid-stack > .grid-stack-item > .ui-resizable-se {
-  right: 4px;
-  bottom: 4px;
-  cursor: se-resize;
-}
-
-
+/* Loading State */
 .loading-state {
   display: flex;
   flex-direction: column;
@@ -821,56 +797,58 @@ h3 {
   width: 40px;
   height: 40px;
   border: 4px solid #e2e8f0;
-  border-top: 4px solid #3b82f6;
+  /* Using green highlight for loader top border */
+  border-top: 4px solid #10b981;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
 .optional-tag {
   font-size: 0.8em;
-  background: #f1f5f9;
-  color: #64748b;
+  background: #f1fdf4;
+  color: #059669;
   padding: 2px 6px;
   border-radius: 4px;
   margin-left: 4px;
 }
 
+/* Additional Analyses Section */
+.analysis-section {
+  margin-top: 30px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  padding: 16px;
+  border-radius: 8px;
+}
 
+.analysis-section h3 {
+  margin-bottom: 16px;
+  color: #2d3748;
+  font-weight: 600;
+}
+
+.analysis-block {
+  margin-bottom: 12px;
+}
+
+.analysis-block h4 {
+  color: #10b981;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.analysis-block p {
+  color: #4b5563;
+  margin-bottom: 8px;
+}
+
+/* Responsive adjustments */
 @media (max-width: 1024px) {
-  .content-wrapper {
-    flex-direction: column;
-  }
-  
   .generator-column {
-    flex: none;
     width: 100%;
   }
 }
 
-/* Firefox scrollbar styles */
-.dashboard-area,
-.generator-column {
-  scrollbar-width: thin;
-  scrollbar-color: #888 #f1f1f1;
-}
-
-.generator-scroll-container {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.generator-column {
-  padding: 16px;
-}
-
-/* Firefox scrollbar styles */
-.generator-scroll-container {
-  scrollbar-width: thin;
-  scrollbar-color: #888 #f1f1f1;
-}
-
-/* New modern toggle switch styles */
 .toggle-switch {
   position: relative;
   display: inline-flex;
@@ -890,7 +868,7 @@ h3 {
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background-color: #3b82f6;
+  background-color: #10b981;
 }
 
 .toggle-slider:before {
@@ -920,7 +898,6 @@ h3 {
   font-weight: 500;
 }
 
-/* Center align generate button */
 .action-row {
   display: flex;
   flex-direction: column;
@@ -930,7 +907,7 @@ h3 {
   width: 100%;
 }
 
-/* Modern Loading Spinner */
+/* Loading Spinner inside the generate button */
 .loading-spinner {
   display: flex;
   align-items: center;
@@ -953,54 +930,78 @@ h3 {
   }
 }
 
-/* Dashboard area scrollbar */
-.dashboard-area {
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
-}
-
-/* Insights toggle positioning */
-.insights-toggle {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  padding: 0 20px;
-}
-
-/* Update existing toggle switch styles */
-.toggle-switch {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-}
-
-.toggle-slider {
-  width: 44px;
-  height: 24px;
-}
-
-/* Loading state animation */
-.loading-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-  gap: 16px;
-}
-
-.loader {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #e2e8f0;
-  border-top: 4px solid #3b82f6;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
 .grid-stack {
   min-height: 100%;
 }
 
+::v-deep .grid-stack-item-content {
+  border-radius: 12px;
+  background: #fff;
+  transition: box-shadow 0.3s ease;
+}
+::v-deep .grid-stack-item-content:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+              0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.chart-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a202c;
+  padding: 8px 8px 12px 8px;
+  background: #ffffff;
+}
+
+.chart-container {
+  flex: 1;
+  background: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Only show bottom-right resize handle */
+::v-deep .ui-resizable-handle {
+  display: none !important;
+}
+
+::v-deep .ui-resizable-se {
+  display: block !important;
+  width: 14px;
+  height: 14px;
+  right: 5px;
+  bottom: 5px;
+  background-color: #cbd5e1;
+  border-radius: 2px;
+  cursor: se-resize;
+}
+
+/* Apply the same scrollbar style to the grid container */
+.grid-wrapper {
+  scrollbar-width: thin;
+  scrollbar-color: #c1c1c1 #f1f1f1;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+    border: 2px solid #f1f1f1;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
+
+  &::-webkit-scrollbar-corner {
+    background: #f1f1f1;
+  }
+}
 </style> 

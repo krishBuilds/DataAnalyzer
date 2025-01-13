@@ -1,67 +1,99 @@
 <template>
   <div class="excel-toolbar">
-    <div class="toolbar-left">
-      <!-- File input must be present -->
-      <input 
-        type="file" 
-        @change="handleFileUpload" 
-        accept=".csv,.xlsx,.xls"
-        ref="fileInput"
-        class="file-input"
-        id="file-upload"
-      >
-      <!-- File button -->
-      <button class="toolbar-btn" @click="$refs.fileInput?.click()">
-        <i class="fas fa-file-import"></i>
-        <span>Open</span>
-      </button>
-      
-      <!-- Show filename when present -->
-      <div v-if="fileName" class="file-name">
-        <i class="fas fa-file"></i>
-        <span>{{ fileName }}</span>
+    <div class="toolbar-section table-tools">
+      <h4>Table Tools & Controls</h4>
+      <div class="toolbar-group">
+        <!-- File Operations -->
+        <input 
+          type="file" 
+          @change="handleFileUpload" 
+          accept=".csv,.xlsx,.xls"
+          ref="fileInput"
+          class="file-input"
+          id="file-upload"
+        >
+        <button class="toolbar-btn" @click="$refs.fileInput?.click()">
+          <i class="fas fa-file-import"></i>
+          <span>Open</span>
+        </button>
+        
+        <button class="toolbar-btn" @click="exportData('csv')">
+          <i class="fas fa-save"></i>
+          <span>Save</span>
+        </button>
+
+        <div class="dropdown">
+          <button class="toolbar-btn" @click="toggleExportMenu">
+            <i class="fas fa-file-export"></i>
+            <span>Export</span>
+          </button>
+          <div class="dropdown-menu" v-if="showExportMenu" @blur="showExportMenu = false">
+            <button @click="exportData('csv')">CSV</button>
+            <button @click="exportData('xlsx')">Excel</button>
+            <button @click="exportFlow">Flow</button>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div class="toolbar-divider"></div>
+
+        <!-- Undo/Redo -->
+        <button class="toolbar-btn icon-only" :disabled="!canUndo" @click="undo" title="Undo">
+          <i class="fas fa-undo"></i>
+        </button>
+        <button class="toolbar-btn icon-only" :disabled="!canRedo" @click="redo" title="Redo">
+          <i class="fas fa-redo"></i>
+        </button>
+
+        <!-- Divider -->
+        <div class="toolbar-divider"></div>
+
+        <!-- Search -->
+        <div class="search-container">
+          <input 
+            type="text" 
+            v-model="searchQuery" 
+            placeholder="Search..."
+            @input="handleSearch"
+            class="search-input"
+          >
+          <i class="fas fa-search search-icon"></i>
+          <span v-if="searchResults.length" class="search-count">
+            {{ searchResults.length }} results
+          </span>
+        </div>
       </div>
-
-      <!-- Separator -->
-      <div class="toolbar-separator"></div>
-      
-      <!-- Rest of the toolbar buttons -->
-      <button class="toolbar-btn icon-only" :disabled="!canUndo" @click="undo">
-        <i class="fas fa-undo"></i>
-      </button>
-      <button class="toolbar-btn icon-only" :disabled="!canRedo" @click="redo">
-        <i class="fas fa-redo"></i>
-      </button>
     </div>
 
-    <div class="toolbar-center">
-      <!-- Clean and Plot buttons with icons only -->
-      <button class="toolbar-btn" @click="cleanData">
-        <i class="fas fa-broom"></i>
-        <span>Clean</span>
-      </button>
-      <button class="toolbar-btn" @click="suggestPlots">
-        <i class="fas fa-chart-bar"></i>
-        <span>Plot</span>
-      </button>
-    </div>
-
-    <div class="toolbar-right">
-      <!-- Export buttons with minimal text -->
-      <button class="toolbar-btn" @click="exportData('csv')">
-        <i class="fas fa-file-csv"></i>
-        <span>CSV</span>
-      </button>
-      <button class="toolbar-btn" @click="exportData('xlsx')">
-        <i class="fas fa-file-excel"></i>
-        <span>XLSX</span>
-      </button>
+    <div class="toolbar-section ai-assistant">
+      <h4>AI Assistant</h4>
+      <div class="toolbar-group">
+        <button class="toolbar-btn" @click="cleanData">
+          <i class="fas fa-broom"></i>
+          <span>Clean</span>
+        </button>
+        <button class="toolbar-btn" @click="suggestPlots">
+          <i class="fas fa-chart-bar"></i>
+          <span>Plot</span>
+        </button>
+        <button class="toolbar-btn" @click="showFlows">
+          <i class="fas fa-list"></i>
+          <span>Flows</span>
+        </button>
+      </div>
     </div>
   </div>
 
   <div class="data-container">
     <div class="table-section" :style="{ width: tableWidth }">
-      <!-- Add background wrapper -->
+      <!-- Add title container inside table section -->
+      <div class="data-title-container" v-if="dataTitle">
+        <h2 class="data-title">
+          {{ dataTitle }}
+          <span class="file-name" v-if="fileName">({{ fileName }})</span>
+        </h2>
+      </div>
+
       <div class="table-background">
         <div class="grid-wrapper">
           <hot-table
@@ -289,6 +321,7 @@ import MonacoEditor from './MonacoEditor.vue';
 import ChatFlows from './ChatFlows.vue';  // Keep only this import for the component
 import chatFlowsManager from '../utils/ChatFlows';  // Keep only this import for the manager
 import { marked } from 'marked';
+import DOMPurify from 'dompurify'; // Add this import for security
 
 // Register Handsontable modules
 registerAllModules();
@@ -300,7 +333,7 @@ export default {
     MonacoEditor,
     ChatFlows  // Use ChatFlows instead of FlowsOverlay
   },
-  emits: ['update:debugMode', 'beforeDestroy'], // Add emits declaration
+  emits: ['update:debugMode', 'beforeUnmount'], // Add emits declaration
   data() {
     return {
       gridOperations: new HandsontableOperations(),
@@ -360,6 +393,12 @@ export default {
       showFlowsOverlay: false,
       isClosingOverlay: false,  // renamed from _isClosing
       lastUserQuestion: '',
+      searchQuery: '',
+      showExportMenu: false,
+      searchResults: [],
+      dataTitle: null,
+      streamingMessage: '',
+      isStreaming: false,
     }
   },
   created() {
@@ -498,14 +537,14 @@ export default {
     },
 
     async handleFileUpload(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      this.loading = true;
-      this.error = null;
-      this.fileName = file.name; // Set the filename
-
       try {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        this.loading = true;
+        this.error = null;
+        this.fileName = file.name;
+
         const data = await this.readFile(file);
         if (!data || !data.length) {
           throw new Error('No data found in file');
@@ -513,6 +552,9 @@ export default {
 
         // Update grid operations
         this.gridOperations.updateData(data);
+        
+        // Request title suggestion immediately after data load
+        await this.suggestTitle(data);
 
         // Update Handsontable settings
         this.hotSettings = {
@@ -537,8 +579,13 @@ export default {
           type: 'bot',
           text: 'Data loaded successfully. What would you like to do with it?'
         });
+
+        // After successful data load
+        await this.updateTableData(data);
+        
       } catch (error) {
-        this.handleError(error);
+        console.error('Error handling file upload:', error);
+        this.error = error.message;
       } finally {
         this.loading = false;
       }
@@ -717,7 +764,9 @@ export default {
     },
 
     renderMarkdown(text) {
-      return marked(text || '');
+      if (!text) return '';
+      // Sanitize and render markdown
+      return DOMPurify.sanitize(marked.parse(text));
     },
 
     async handleSuccessResponse(response) {
@@ -1396,6 +1445,7 @@ export default {
       this.tableData = [];
       this.chatMessages = [];
       this.fileName = '';
+      this.dataTitle = null;
     },
 
     destroyHandsontable() {
@@ -1461,12 +1511,11 @@ export default {
       }
     },
 
-    beforeDestroy() {
-      this.cleanup();
-    },
-
-    destroyed() {
-      this.isDestroyed = true;
+    beforeUnmount() {
+      // Cleanup Handsontable instance
+      if (this.$refs.hotTable && this.$refs.hotTable.hotInstance) {
+        this.$refs.hotTable.hotInstance.destroy();
+      }
     },
 
     captureFlow() {
@@ -1663,6 +1712,180 @@ export default {
         });
       }
     },
+
+    toggleExportMenu() {
+      this.showExportMenu = !this.showExportMenu;
+    },
+
+    handleSearch() {
+      if (!this.searchQuery) {
+        this.searchResults = [];
+        this.clearHighlights();
+        return;
+      }
+
+      if (this.$refs.hotTable?.hotInstance) {
+        const hot = this.$refs.hotTable.hotInstance;
+        const searchPlugin = hot.getPlugin('search');
+        
+        // Perform search
+        const queryResult = searchPlugin.query(this.searchQuery);
+        this.searchResults = queryResult;
+
+        // Highlight results
+        hot.render();
+        
+        // Scroll to first result if exists
+        if (queryResult.length > 0) {
+          const { row, col } = queryResult[0];
+          hot.scrollViewportTo(row, col);
+          hot.selectCell(row, col);
+        }
+      }
+    },
+
+    clearHighlights() {
+      if (this.$refs.hotTable?.hotInstance) {
+        const hot = this.$refs.hotTable.hotInstance;
+        const searchPlugin = hot.getPlugin('search');
+        searchPlugin.query('');
+        hot.render();
+      }
+    },
+
+    exportFlow() {
+      const flow = {
+        messages: this.chatMessages,
+        data: this.gridOperations.getData(),
+        headers: this.gridOperations.getHeaders(),
+        fileName: this.fileName,
+        timestamp: new Date().toISOString()
+      };
+
+      // Create and download the flow file
+      const blob = new Blob([JSON.stringify(flow, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `flow-${new Date().toISOString()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+
+    // Add new method for title suggestion
+    async suggestTitle(data) {
+      try {
+        const response = await axios.post('/api/suggest-header', {
+          data: data,
+          fileName: this.fileName
+        });
+
+        if (response.status !== 200) {
+          throw new Error('Failed to get title suggestion');
+        }
+
+        this.dataTitle = response.data.title;
+      } catch (error) {
+        console.error('Error getting title suggestion:', error);
+        this.dataTitle = 'Dataset Analysis';
+      }
+    },
+
+    // Add method to scroll chat to bottom
+    scrollToBottom() {
+      if (this.$refs.chatMessages) {
+        this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
+      }
+    },
+
+    async cleanupHandsontable() {
+      try {
+        // Clear all data first
+        if (this.gridOperations) {
+          this.gridOperations.clearData();
+        }
+
+        // Destroy Handsontable instance
+        if (this.$refs.hotTable?.hotInstance) {
+          const hot = this.$refs.hotTable.hotInstance;
+          if (hot && !hot.isDestroyed) {
+            // Remove all event listeners
+            hot.removeHook('afterChange');
+            hot.removeHook('afterSelection');
+            hot.removeHook('afterDeselect');
+            hot.removeHook('afterRender');
+            
+            // Destroy the instance
+            hot.destroy();
+            
+            // Clear the reference
+            this.$refs.hotTable.hotInstance = null;
+          }
+        }
+
+        // Clear all data structures
+        this.hotSettings = null;
+        this.tableData = [];
+        this.headers = [];
+        
+        this.chatMessages = [];
+        this.fileName = '';
+        this.dataTitle = null;
+
+        // Wait for Vue to process these changes
+        await this.$nextTick();
+      } catch (error) {
+        console.warn('Error during cleanup:', error);
+      }
+    },
+
+    // Update navigation method to handle cleanup properly
+    async navigateToDashboard() {
+      try {
+        // Set loading state
+        this.loading = true;
+
+        // Cleanup Handsontable
+        await this.cleanupHandsontable();
+
+        // Wait for cleanup to complete
+        await this.$nextTick();
+
+        // Navigate
+        await this.$router.push('/dashboard');
+      } catch (error) {
+        console.error('Navigation error:', error);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    // Update route guard to be more robust
+    async beforeRouteLeave(to, from, next) {
+      try {
+        // Set loading state
+        this.loading = true;
+
+        // Cleanup Handsontable
+        await this.cleanupHandsontable();
+
+        // Wait for cleanup to complete
+        await this.$nextTick();
+
+        // Clear any remaining timeouts
+        if (this._closeFlowsTimer) {
+          clearTimeout(this._closeFlowsTimer);
+        }
+
+        next();
+      } catch (error) {
+        console.error('Error during navigation cleanup:', error);
+        this.loading = false;
+        next(false);
+      }
+    }
   },
 
   // Add watcher for showFlowsOverlay
@@ -1677,26 +1900,17 @@ export default {
           }
         });
       }
+    },
+    streamingMessage() {
+      this.$nextTick(this.scrollToBottom);
+    },
+    chatMessages: {
+      deep: true,
+      handler() {
+        this.$nextTick(this.scrollToBottom);
+      }
     }
   },
-
-  // Add beforeRouteLeave navigation guard
-  beforeRouteLeave(to, from, next) {
-    // Save state before leaving
-    const savedState = {
-      data: this.gridOperations.getData(),
-      headers: this.gridOperations.getHeaders()
-    };
-    
-    this.cleanup();
-    
-    // Store state for potential recovery
-    if (to.name === 'analysis-board') {
-      sessionStorage.setItem('tableState', JSON.stringify(savedState));
-    }
-    
-    next();
-  }
 }
 </script>
 
@@ -1704,66 +1918,202 @@ export default {
 .data-container {
   display: flex;
   position: relative;
-  height: 100%;
+  height: calc(100% - 8px); /* Adjust for toolbar height */
   overflow: hidden;
 }
 
-.excel-toolbar {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  padding: 3px 12px; /* Reduced padding */
-  background: #f8f9fa;
-  border-bottom: 1px solid #ddd;
-  gap: 16px;
-  height: 30px; /* Reduced from 40px to 30px (25% reduction) */
+.table-section {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
-.toolbar-left {
+.data-title-container {
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #ddd;
+  text-align: center; /* Center the title */
+  width: 100%;
+}
+
+.data-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a8754;
+  display: flex;
+  align-items: center;
+  justify-content: center; /* Center title and filename */
+  gap: 8px;
+}
+
+.file-name {
+  color: #666;
+  font-weight: normal;
+  font-size: 13px;
+}
+
+.table-background {
+  flex: 1;
+  overflow: auto;
+  background: white;
+}
+
+.grid-wrapper {
+  height: 100%;
+}
+
+.excel-toolbar {
+  display: flex;
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #ddd;
+  gap: 24px;
+  height: 48px; /* Fixed height */
+  align-items: center;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  h4 {
+    margin: 0;
+    font-size: 12px;
+    color: #666;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+}
+
+.table-tools {
+  flex: 2;
+  border-right: 1px solid #ddd;
+  padding-right: 24px;
+}
+
+.toolbar-group {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.file-input {
-  display: none;
-}
-
-.file-name {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #666;
-  font-size: 12px; /* Smaller filename text */
-  padding: 0 6px;
-}
-
-.toolbar-separator {
+.toolbar-divider {
   width: 1px;
-  height: 20px; /* Reduced separator height */
+  height: 24px;
   background: #ddd;
-  margin: 0 4px;
+  margin: 0 8px;
 }
 
+.search-container {
+  position: relative;
+  width: 200px;
+  height: 32px;
+}
+
+.search-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 32px 0 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  transition: all 0.2s;
+
+  &:focus {
+    border-color: #1a8754;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(26, 135, 84, 0.1);
+  }
+}
+
+.search-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #666;
+  pointer-events: none;
+}
+
+.search-count {
+  position: absolute;
+  right: -70px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: #666;
+}
+
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1000;
+  min-width: 120px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+
+  button {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 13px;
+    color: #333;
+    cursor: pointer;
+
+    &:hover {
+      background: #f0f9f4;
+      color: #1a8754;
+    }
+  }
+}
+
+/* Update toolbar button styles */
 .toolbar-btn {
-  height: 24px; /* Reduced button height */
-  padding: 0 8px;
-  font-size: 12px; /* Slightly smaller font */
-  min-width: 24px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  min-width: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 1px solid #ddd;
   background: white;
-  color: #444;
+  color: #1a8754;
   cursor: pointer;
   transition: all 0.2s;
-}
+  border-radius: 4px;
 
-.toolbar-btn.icon-only {
-  width: 24px;
-  padding: 0;
+  &:hover:not(:disabled) {
+    background: #f0f9f4;
+    border-color: #1a8754;
+  }
+
+  &:active:not(:disabled) {
+    background: #e8f5e9;
+  }
+
+  &.icon-only {
+    width: 32px;
+    padding: 0;
+  }
+
+  i {
+    font-size: 14px;
+  }
 }
 
 .toolbar-btn:hover:not(:disabled) {
@@ -1906,7 +2256,6 @@ export default {
   background: #f8f9fa;
   border-bottom: 1px solid #ddd;
   gap: 24px;
-  height:40px
 }
 
 .toolbar-left {
@@ -2917,15 +3266,6 @@ textarea {
   cursor: not-allowed;
 }
 
-/* Add styles for excel editor */
-.excel-toolbar {
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-  background: #e2e3e5; /* Darker background */
-  border-bottom: 2px solid #6e757c;
-}
-
 /* Improve button contrast */
 .toolbar-btn:disabled {
   background: rgba(255, 255, 255, 0.05);
@@ -3578,7 +3918,6 @@ textarea {
   padding: 2px 4px;
   border-radius: 3px;
   font-family: 'Fira Code', monospace;
-  font-size: 0.9em;
 }
 
 .markdown-content :deep(pre) {
@@ -3693,6 +4032,244 @@ textarea {
   animation: blink 1s step-end infinite;
   margin-left: 2px;
   font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Add these new styles */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f8f9fa;
+}
+
+.nvidia-theme {
+  --nvidia-green: #76B900;
+  --nvidia-green-light: #86CB02;
+  --nvidia-dark: #333333;
+  --nvidia-gray: #f2f2f2;
+}
+
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e0e0e0;
+  background: white;
+}
+
+.chat-header h3 {
+  margin: 0;
+  color: var(--nvidia-dark);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.flow-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.nvidia-btn-small {
+  padding: 6px;
+  border: 1px solid var(--nvidia-green);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nvidia-green);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.nvidia-btn-small:hover {
+  background: var(--nvidia-green);
+  color: white;
+}
+
+.nvidia-btn-small.recording {
+  background: var(--nvidia-green);
+  color: white;
+  animation: pulse 2s infinite;
+}
+
+.chat-message {
+  margin: 12px 0;
+}
+
+.chat-bubble {
+  padding: 12px;
+  border-radius: 12px;
+  max-width: 85%;
+}
+
+.user-bubble {
+  margin-left: auto;
+  background: white;
+  border: 1px solid var(--nvidia-green);
+  color: var(--nvidia-dark);
+}
+
+.bot-bubble {
+  margin-right: auto;
+  background: var(--nvidia-green);
+  color: white;
+}
+
+.input-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.chat-input {
+  flex: 1;
+  min-height: 44px;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.send-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 8px;
+  background: var(--nvidia-green);
+  color: white;
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--nvidia-dark);
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--nvidia-green);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* Add these new styles */
+.data-title-container {
+  padding: 8px 12px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #ddd;
+}
+
+.data-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a8754;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .file-name {
+    font-size: 14px;
+    color: #666;
+    font-weight: normal;
+  }
+}
+
+/* Add styles for markdown content */
+.message-content {
+  /* Basic markdown styles */
+  h1, h2, h3, h4, h5, h6 {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+  }
+
+  p {
+    margin-bottom: 0.5em;
+  }
+
+  ul, ol {
+    margin-left: 1.5em;
+    margin-bottom: 0.5em;
+  }
+
+  code {
+    background-color: #f0f0f0;
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+    font-family: monospace;
+  }
+
+  pre {
+    background-color: #f5f5f5;
+    padding: 1em;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+
+    code {
+      background-color: transparent;
+      padding: 0;
+    }
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.5em 0;
+
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+
+    th {
+      background-color: #f5f5f5;
+    }
+
+    tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+  }
+
+  blockquote {
+    border-left: 4px solid #ddd;
+    margin: 0.5em 0;
+    padding-left: 1em;
+    color: #666;
+  }
+}
+
+/* Add streaming message styles */
+.message.streaming {
+  opacity: 0.8;
+  .message-content {
+    &::after {
+      content: '▋';
+      display: inline-block;
+      animation: blink 1s step-end infinite;
+    }
+  }
 }
 
 @keyframes blink {

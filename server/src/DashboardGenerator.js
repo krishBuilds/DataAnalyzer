@@ -58,44 +58,53 @@ class DashboardGenerator {
         try {
             const sampleData = this.getRandomSampleRows(data, [], 5);
             
-            const systemPrompt = `You are a data visualization expert. Focus on:
-            1. Clear, meaningful visualizations that match the data types 
-            2. Interactive features where appropriate
-            3. Proper error handling
-            4. Consistent theme with dark background
-            5. User-friendly tooltips and legends
-            6. The suggestions can be based on data modification as well, as we have libraries to modify data, so suggest visualizations that are meaningful, based on analysis and would look good in a plot. Don't shy away from data manipulation techniques
-            7. Return ONLY valid JSON in the specified format
-            8. Mention about theme and colors in each suggestion
-            9. Based on the analysis, in the suggestion also mention about the previous analysis data and mention values that are relevant for that plot suggested. `;
-            
-            const userPrompt = `Based on the following data analysis and sample data, suggest visualization methods for a dashboard.
-            Each suggestion should include a clear description and visualization type.
-            
-            Data Analysis:
-            ${JSON.stringify(analysis, null, 2)}
-            
-            Sample Data (10 rows):
-            ${JSON.stringify(sampleData, null, 2)}
-            
-            Data Headers: ${JSON.stringify(headers)}
-            
-            User Requirements:
-            - Visualization Type: ${config.visualizationDesc || 'Any appropriate visualizations'}
-            - Analysis Level: ${config.analysisLevel || 'basic'}
-            - Theme: ${config.themeDesc || 'Default dark theme'}
-            
-            Return ONLY a valid JSON object in this exact format:
-            {
-              "suggestions": [
+            const systemPrompt = `
+                You are a data visualization expert. Focus on:
+                1. Generating 5-6 clear, meaningful visualizations that match the data types
+                2. Providing 2-3 additional analyses (like growth rate calculations) that may not use Plotly
+                3. Interactive features where appropriate
+                4. Proper error handling and consistent data transformations with lodash
+                5. A consistent theme (preferably a dark-based theme)
+                6. User-friendly tooltips, legends, and textual analysis
+                7. Employ creative but logical data manipulation to yield valuable insights
+                8. Return ONLY valid JSON in the specified format and each JSON is independently treated
+                9. Reference relevant parts of the previous analysis data and any important values
+                10. Understand the data, what it might actually represent and recommend only relevant plots and don't recommend irrelevant ones based on understanding of the data here
+            `;
+
+            const userPrompt = `
+                Based on the following data analysis and sample data, suggest visualizations and additional analyses for a dashboard.
+
+                Data Analysis:
+                ${JSON.stringify(analysis, null, 2)}
+
+                Sample Data (5 rows):
+                ${JSON.stringify(sampleData, null, 2)}
+
+                Data Headers: ${JSON.stringify(headers)}
+
+                User Requirements:
+                - Visualization Type: ${config.visualizationDesc || 'Any appropriate visualizations'}
+                - Analysis Level: ${config.analysisLevel || 'basic'}
+                - Theme: ${config.themeDesc || 'Dark theme'}
+
+                Please include:
+                - 5-6 Plotly-based visualizations
+                - 2-3 analyses that might not be Plotly-based (e.g., numeric insights such as growth rate)
+                - Use lodash where necessary for data manipulation
+
+                Return ONLY a valid JSON object in this exact format:
                 {
-                  "type": "visualization_type",
-                  "description": "detailed description",
-                  "priority": 1-10,
-                  "config": {}
+                  "suggestions": [
+                    {
+                      "type": "visualization_type",
+                      "description": "detailed description",
+                      "priority": 1-10,
+                      "config": {}
+                    }
+                  ]
                 }
-              ]
-            }`;
+            `;
 
             const response = await this.langModelService.getVisualizationSuggestions(userPrompt, systemPrompt);
             
@@ -116,17 +125,18 @@ class DashboardGenerator {
         }
     }
 
-
     async generateMethods(suggestion, analysis, sampleData) {
         try {
-            const systemPrompt = `You are a Plotly.js expert. Provide production-ready JavaScript code that:
-            1. Handles data preprocessing effectively
-            2. Creates responsive visualizations based on description
-            3. Implements proper error handling
-            4. Uses consistent styling and colors based on theme metioned
-            5. Doesn't have error "Failed to generate visualization methods: Unexpected token 'const'"
-            6. Use accurate valid syntax and methods
-            7. Just return the method code and don't add any unnecessary token like ':' that might cause issue`;
+            const systemPrompt = `
+                You are a Plotly.js expert. Provide production-ready JavaScript code that:
+                1. Produces 5-6 Plotly visualizations
+                2. Includes at least 2 additional textual or numeric analyses (e.g., growth rate) that may not be Plotly-based
+                3. Uses lodash extensively for data transformations
+                4. Provides responsive, user-friendly design with proper error handling
+                5. Uses a consistent dark theme and minimal color palette
+                6. Avoids "Failed to generate visualization methods: Unexpected token 'const'"
+                7. Ensures correct syntax and minimal extraneous tokens
+            `;
 
             const userPrompt = visualizationPrompt
                 .replace('{description}', JSON.stringify(suggestion, null, 2))
