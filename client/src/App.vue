@@ -63,7 +63,7 @@
 </template>
 
 <script>
-import DataTable from './components/ChatClient.vue'
+import DataTable from './components/TableChat.vue'
 import ChatAnalysisBoard from './components/ChatAnalysisBoard.vue'
 import AnalysisDashboard from './components/AnalysisDashboard.vue'
 import DashboardGenerator from './components/DashboardGenerator.vue'
@@ -148,11 +148,13 @@ export default {
 </script>
 
 <style>
+/* Reset default styles */
 html, body {
   margin: 0;
   padding: 0;
-  height: 100vh;
-  overflow: hidden;
+  height: 100%;
+  width: 100%;
+  overflow: hidden !important;
 }
 
 #app {
@@ -163,6 +165,56 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Global scrollbar styles */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 10px;
+  border: 2px solid #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Handsontable specific scrollbar styles */
+:deep(.handsontable) {
+  .wtHolder::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .wtHolder::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+  }
+
+  .wtHolder::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 10px;
+    border: 2px solid #f1f1f1;
+  }
+
+  .wtHolder::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+
+  /* Firefox scrollbar styles */
+  .wtHolder {
+    scrollbar-width: thin;
+    scrollbar-color: #888 #f1f1f1;
+  }
 }
 
 .app-container {
@@ -221,8 +273,33 @@ html, body {
 
 .main-content {
   flex: 1;
-  height: 100%;
   overflow: hidden;
   position: relative;
+}
+
+/* Add specific styles for components that should have scrollbars */
+.scrollable-content {
+  overflow: auto;
+  height: 100%;
+  
+  &::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 10px;
+    border: 2px solid #f1f1f1;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
 }
 </style>

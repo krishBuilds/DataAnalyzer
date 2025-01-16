@@ -32,6 +32,89 @@
             <p>{{ analysis.content }}</p>
           </div>
         </div>
+
+        <!-- Add Chakra UI Cards Section after GridStack -->
+        <div v-if="chakraComponents.length && !isGenerating" class="chakra-section">
+          <div class="chakra-grid">
+            <div 
+              v-for="(component, index) in chakraComponents" 
+              :key="`chakra-${index}`"
+              class="chakra-card"
+            >
+              <div class="card-header">
+                <h4>{{ component.title }}</h4>
+              </div>
+              <div class="card-content">
+                <!-- Enhanced Metric Display -->
+                <template v-if="component.type === 'metric'">
+                  <div class="metric-value">
+                    {{ formatMetricValue(component) }}
+                  </div>
+                  <div class="metric-label">{{ component.label }}</div>
+                  <div 
+                    v-if="component.change" 
+                    :class="['change-indicator', component.change.type]"
+                  >
+                    <i :class="getChangeIcon(component.change.type)"></i>
+                    {{ formatChange(component.change) }}
+                  </div>
+                </template>
+
+                <!-- Enhanced List Display -->
+                <template v-if="component.type === 'list'">
+                  <ul class="list-content">
+                    <li 
+                      v-for="(item, i) in component.items" 
+                      :key="i"
+                      class="list-item"
+                    >
+                      <div class="list-item-content">
+                        <span class="list-item-label">{{ item.label }}</span>
+                        <span class="list-item-value">{{ item.value }}</span>
+                      </div>
+                      <div 
+                        v-if="item.change"
+                        :class="['list-item-change', item.change.type]"
+                      >
+                        {{ item.change }}
+                      </div>
+                    </li>
+                  </ul>
+                </template>
+
+                <!-- Enhanced Table Display -->
+                <template v-if="component.type === 'table'">
+                  <div class="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th 
+                            v-for="(header, i) in component.headers" 
+                            :key="i"
+                            :class="getColumnAlignment(component.alignment, i)"
+                          >
+                            {{ header }}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, i) in component.rows" :key="i">
+                          <td 
+                            v-for="(cell, j) in row" 
+                            :key="j"
+                            :class="getColumnAlignment(component.alignment, j)"
+                          >
+                            {{ cell }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -138,6 +221,7 @@ import 'gridstack/dist/gridstack.min.css';
 import { GridStack } from 'gridstack';
 import Plotly from 'plotly.js-dist';
 import { debounce } from 'lodash';
+import { ChakraComponentGenerator } from '../services/CardGenerator';
 
 export default {
   name: 'DashboardGenerator',
@@ -160,6 +244,8 @@ export default {
       grid: null,
       showGenerator: true,
       dashboardHeader: 'My Dashboard',
+      chakraComponents: [],
+      chakraGenerator: new ChakraComponentGenerator(),
     }
   },
   computed: {
@@ -303,32 +389,40 @@ export default {
     },
 
     initializeGridStack() {
-      this.$nextTick(() => {
-        const gridElement = document.querySelector('.grid-stack');
-        if (gridElement) {
-          this.grid = GridStack.init({
-            column: 12,
-            cellHeight: 50,
-            float: true,
-            animate: true,
-            minRow: 1,
-            draggable: {
-              scroll: true,
-              handle: '.grid-stack-item-content'
-            },
-            resizable: {
-              handles: 'all'
-            },
-            margin: 5
-          });
+      const gridElement = document.querySelector('.grid-stack');
+      if (!gridElement) {
+        console.warn('Grid element not found');
+        return;
+      }
 
-          this.grid.on('resizestop', (event, element) => {
-            if (element.plotContainer && document.body.contains(element.plotContainer)) {
-              Plotly.Plots.resize(element.plotContainer);
-            }
-          });
-        }
-      });
+      // Clear existing content
+      gridElement.innerHTML = '';
+
+      try {
+        this.grid = GridStack.init({
+          column: 12,
+          cellHeight: 50,
+          float: true,
+          animate: true,
+          minRow: 1,
+          draggable: {
+            scroll: true,
+            handle: '.grid-stack-item-content'
+          },
+          resizable: {
+            handles: 'all'
+          },
+          margin: 5
+        });
+
+        this.grid.on('resizestop', (event, element) => {
+          if (element.plotContainer && document.body.contains(element.plotContainer)) {
+            Plotly.Plots.resize(element.plotContainer);
+          }
+        });
+      } catch (err) {
+        console.error('Error initializing GridStack:', err);
+      }
     },
 
     createChartWidget(component, index) {
@@ -377,62 +471,76 @@ export default {
     },
 
     renderCharts() {
-      this.$nextTick(() => {
+      if (!this.dashboardComponents.length) return;
+
+      this.$nextTick(async () => {
         if (!this.grid) {
           this.initializeGridStack();
+          // Add small delay to ensure grid is ready
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
 
-        setTimeout(() => {
-          if (this.grid) {
-            this.grid.removeAll();
+        this.dashboardComponents.forEach((component, index) => {
+          const gridItem = this.createChartWidget(component, index);
+          const container = gridItem.plotContainer;
 
-            this.dashboardComponents.forEach((component, index) => {
-              const gridItem = this.createChartWidget(component, index);
-              const container = gridItem.plotContainer;
+          if (!container) {
+            console.warn('Container not found for chart:', index);
+            return;
+          }
 
-              const layout = {
+          // Ensure container is in DOM
+          if (!document.body.contains(container)) {
+            console.warn('Container not in DOM:', index);
+            return;
+          }
+
+          const layout = {
+            autosize: true,
+            showlegend: false,
+            title: component.title,
+            ...component.content?.layout,
+            width: container.clientWidth,
+            height: container.clientHeight - 40 // Account for title
+          };
+
+          // Create plot with error handling
+          try {
+            Plotly.newPlot(
+              container,
+              component.content.data,
+              layout,
+              {
+                responsive: true,
+                useResizeHandler: true,
                 autosize: true,
-                showlegend: false,
-                title: component.title,
-                ...component.content?.layout,
-                width: container.clientWidth,
-                height: container.clientHeight
-              };
-
-              Plotly.newPlot(
-                container,
-                component.content.data,
-                layout,
-                {
-                  responsive: true,
-                  useResizeHandler: true,
-                  autosize: true,
                   resize: true,
                   editable: true
-                }
-              ).then(() => {
-                // Only resize if it's still in DOM
-                if (document.body.contains(container)) {
-                  Plotly.Plots.resize(container);
-                }
-              });
+              }
+            ).then(() => {
+              if (document.body.contains(container)) {
+                Plotly.Plots.resize(container);
+              }
+            }).catch(err => {
+              console.error('Error creating plot:', err);
             });
+          } catch (err) {
+            console.error('Error in plot creation:', err);
           }
-        }, 100);
+        });
       });
     },
 
     async generateDashboard() {
-      if (!this.processedData || !this.basicAnalysis) {
-        return;
-      }
+      if (!this.processedData || !this.basicAnalysis) return;
 
       this.isGenerating = true;
       this.analysisError = null;
 
       try {
-        // Cleanup from previous generation
+        // Enhanced cleanup
         if (this.grid) {
+          // First remove all Plotly instances
           const items = this.grid.getGridItems();
           items.forEach(item => {
             if (item.plotContainer) {
@@ -446,42 +554,68 @@ export default {
               item.resizeObserver.disconnect();
             }
           });
+          
+          // Remove grid items
           this.grid.removeAll();
+          
+          // Destroy and reinitialize grid
+          this.grid.destroy();
+          this.grid = null;
+          this.initializeGridStack();
         }
+
+        // Clear previous state
         this.dashboardComponents = [];
-        this.nonPlotlyAnalyses = [];
+        this.chakraComponents = [];
 
-        // 1. Get chart suggestions
-        const suggestionsResponse = await axios.post('/api/dashboard/get-suggestions', {
-          data: this.processedData,
-          headers: Object.keys(this.processedData[0]),
-          analysis: this.basicAnalysis.raw,
-          config: {
-            visualizationDesc: this.config.visualizationDesc,
-            analysisLevel: this.config.analysisLevel,
-            themeDesc: this.config.themeDesc
-          }
-        });
+        // Parallel execution of both Plotly and Chakra component generation
+        const [plotlySuggestions, chakraSuggestions] = await Promise.all([
+          axios.post('/api/dashboard/get-suggestions', {
+            data: this.processedData,
+            headers: Object.keys(this.processedData[0]),
+            analysis: this.basicAnalysis.raw,
+            config: {
+              visualizationDesc: this.config.visualizationDesc,
+              analysisLevel: this.config.analysisLevel,
+              themeDesc: this.config.themeDesc
+            }
+          }),
+          this.chakraGenerator.getSuggestions(
+            this.processedData,
+            this.basicAnalysis.raw,
+            this.config
+          )
+        ]);
 
-        if (!suggestionsResponse.data.suggestions) {
-          throw new Error('No visualization suggestions received');
-        }
-
-        // 2. Generate final chart objects + any textual analyses
-        const dashboardResponse = await axios.post('/api/dashboard/generate-visualizations', {
-          data: this.processedData,
-          suggestions: suggestionsResponse.data.suggestions,
-          analysis: this.basicAnalysis.raw,
-          config: this.config
-        });
+        // Generate both types of components in parallel
+        const [dashboardResponse, chakraComponents] = await Promise.all([
+          axios.post('/api/dashboard/generate-visualizations', {
+            data: this.processedData,
+            suggestions: plotlySuggestions.data.suggestions,
+            analysis: this.basicAnalysis.raw,
+            config: this.config
+          }),
+          this.chakraGenerator.generateComponents(
+            this.processedData,
+            chakraSuggestions,
+            this.basicAnalysis.raw
+          )
+        ]);
 
         this.dashboardComponents = dashboardResponse.data.components;
-        // If the server returns additional textual/numeric analysis, capture it here:
-        this.nonPlotlyAnalyses = dashboardResponse.data.nonPlotlyAnalyses || [];
+        this.chakraComponents = chakraComponents;
 
-        this.renderCharts();
+        // Ensure we have the grid initialized
+        if (!this.grid) {
+          this.initializeGridStack();
+        }
 
-        // Optionally auto-hide generator panel
+        // Wait for DOM updates before rendering
+        await this.$nextTick();
+        setTimeout(() => {
+          this.renderCharts();
+        }, 250);
+
         this.showGenerator = false;
       } catch (error) {
         this.analysisError = error.response?.data?.error || 'Error generating dashboard';
@@ -522,6 +656,41 @@ export default {
       } catch (error) {
         console.error('Analysis error:', error);
       }
+    },
+
+    formatMetricValue(component) {
+      const { value, format = {} } = component;
+      let formattedValue = value;
+
+      // Apply number formatting if needed
+      if (typeof value === 'number') {
+        formattedValue = Number(value).toLocaleString(undefined, {
+          minimumFractionDigits: format.decimals || 0,
+          maximumFractionDigits: format.decimals || 0
+        });
+      }
+
+      // Add prefix/suffix
+      return `${format.prefix || ''}${formattedValue}${format.suffix || ''}`;
+    },
+
+    formatChange(change) {
+      if (!change) return '';
+      const prefix = change.type === 'positive' ? '+' : '';
+      const value = change.percentage ? `${prefix}${change.value}%` : `${prefix}${change.value}`;
+      return value;
+    },
+
+    getChangeIcon(type) {
+      return {
+        positive: 'fas fa-arrow-up',
+        negative: 'fas fa-arrow-down',
+        neutral: 'fas fa-minus'
+      }[type] || 'fas fa-minus';
+    },
+
+    getColumnAlignment(alignment = [], index) {
+      return alignment[index] || 'left';
     }
   }
 }
@@ -1003,5 +1172,171 @@ h3 {
   &::-webkit-scrollbar-corner {
     background: #f1f1f1;
   }
+}
+
+.chakra-section {
+  margin-top: 20px;
+  padding: 0 20px;
+}
+
+.chakra-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.chakra-card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  transition: all 0.3s ease;
+}
+
+.chakra-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  margin-bottom: 12px;
+}
+
+.card-header h4 {
+  color: #2d3748;
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.metric-value {
+  font-size: 2.5em;
+  font-weight: 700;
+  color: #2d3748;
+  line-height: 1.2;
+}
+
+.metric-label {
+  color: #718096;
+  font-size: 0.9em;
+  margin-top: 4px;
+}
+
+.change-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  margin-top: 8px;
+}
+
+.change-indicator.positive {
+  color: #48bb78;
+}
+
+.change-indicator.negative {
+  color: #f56565;
+}
+
+.change-indicator.neutral {
+  color: #718096;
+}
+
+.list-content {
+  list-style: none;
+  padding: 0;
+}
+
+.list-content li {
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+  color: #4a5568;
+}
+
+.list-content li:last-child {
+  border-bottom: none;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+th, td {
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+  background: #f7fafc;
+  font-weight: 600;
+  color: #2d3748;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+td {
+  color: #4a5568;
+}
+
+.list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.list-item-label {
+  color: #4a5568;
+  font-size: 0.9em;
+}
+
+.list-item-value {
+  color: #2d3748;
+  font-weight: 600;
+}
+
+.table-wrapper table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table-wrapper th {
+  background: #f7fafc;
+  padding: 12px;
+  font-weight: 600;
+  color: #2d3748;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.table-wrapper td {
+  padding: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.text-left {
+  text-align: left;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.text-center {
+  text-align: center;
 }
 </style> 

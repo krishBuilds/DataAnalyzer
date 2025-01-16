@@ -27,7 +27,12 @@ const vuetify = createVuetify({
   },
   theme: {
     defaultTheme: 'dark'
-  }
+  },
+  defaults: {
+    VApp: {
+      fullHeight: true,
+    },
+  },
 })
 
 const app = createApp(App)

@@ -27,10 +27,12 @@ Requirements:
    - Ensure proper data type handling
    - Make the plot editable as true in the config (not layout)
    - Ensure no const related error comes
+   - Use the visualization description mentioned and theme mentioned to layout the style and config 
+   
 Sample Data:
 {sampleData}
 
-Visualization Request:
+Visualization Request and theming:
 {description}
 
 Available libraries:
@@ -56,29 +58,35 @@ class DashboardGenerator {
 
     async getVisualizationSuggestions(data, headers, analysis, config) {
         try {
-            const sampleData = this.getRandomSampleRows(data, [], 5);
+            const sampleData = this.getRandomSampleRows(data, [], 12);
+            const totalRows = data.length;
             
             const systemPrompt = `
                 You are a data visualization expert. Focus on:
                 1. Generating 5-6 clear, meaningful visualizations that match the data types
-                2. Providing 2-3 additional analyses (like growth rate calculations) that may not use Plotly
-                3. Interactive features where appropriate
-                4. Proper error handling and consistent data transformations with lodash
-                5. A consistent theme (preferably a dark-based theme)
-                6. User-friendly tooltips, legends, and textual analysis
-                7. Employ creative but logical data manipulation to yield valuable insights
-                8. Return ONLY valid JSON in the specified format and each JSON is independently treated
-                9. Reference relevant parts of the previous analysis data and any important values
-                10. Understand the data, what it might actually represent and recommend only relevant plots and don't recommend irrelevant ones based on understanding of the data here
+                2. Interactive features where appropriate
+                3. Proper error handling and consistent data transformations with lodash
+                4. A consistent theme (preferably a dark-based theme)
+                5. User-friendly tooltips, legends, and textual analysis
+                6. Employ creative but logical data manipulation to yield valuable insights
+                7. Return ONLY valid JSON in the specified format and each JSON is independently treated
+                8. Reference relevant parts of the previous analysis data and any important values
+                9. Understand the data, what it might actually represent and recommend only relevant plots and don't recommend irrelevant ones based on understanding of the data here
+                10. Be analysis based, understand how may unique values are present and then only recommend the suggestions here
+                11. Be open to add suggestion for adding new column by manipulating existing data to generate meaningful insights (dont give code, just mention in description)
+                12. Ensure that underlying data has some meaning by understandign the data headers and data values and only plot against some quantity if its actually meaningful
+                13. As you are plotly based, you can use any plotly based feature such as map, table and other plots. Also don't display plots that dispay only single data point information in a single plotly plot
             `;
 
             const userPrompt = `
                 Based on the following data analysis and sample data, suggest visualizations and additional analyses for a dashboard.
 
+                Total Number of Rows in Dataset: ${totalRows}
+
                 Data Analysis:
                 ${JSON.stringify(analysis, null, 2)}
 
-                Sample Data (5 rows):
+                Sample Data (12 rows out of ${totalRows} total rows):
                 ${JSON.stringify(sampleData, null, 2)}
 
                 Data Headers: ${JSON.stringify(headers)}
@@ -90,8 +98,8 @@ class DashboardGenerator {
 
                 Please include:
                 - 5-6 Plotly-based visualizations
-                - 2-3 analyses that might not be Plotly-based (e.g., numeric insights such as growth rate)
                 - Use lodash where necessary for data manipulation
+                - Consider the full dataset size (${totalRows} rows) when suggesting visualizations
 
                 Return ONLY a valid JSON object in this exact format:
                 {
@@ -129,13 +137,11 @@ class DashboardGenerator {
         try {
             const systemPrompt = `
                 You are a Plotly.js expert. Provide production-ready JavaScript code that:
-                1. Produces 5-6 Plotly visualizations
-                2. Includes at least 2 additional textual or numeric analyses (e.g., growth rate) that may not be Plotly-based
-                3. Uses lodash extensively for data transformations
-                4. Provides responsive, user-friendly design with proper error handling
-                5. Uses a consistent dark theme and minimal color palette
-                6. Avoids "Failed to generate visualization methods: Unexpected token 'const'"
-                7. Ensures correct syntax and minimal extraneous tokens
+                1. Provides responsive, user-friendly design with proper error handling and appropriate sequential format
+                2. Uses a consistent theme mentioned in the visualization config
+                3. Avoid error Unexpected token 'const' or any other unexpected token here with consideration
+                4. Ensures correct syntax and add theme values appropriately for plotly plot with theme config mentioning background colors, text colors, title and other values 
+                5. Ensure the theme of plot matches the visualization info and description given and the plot text and background are represented in sync correctly to form a visually appealing and properly visible plot overall here.
             `;
 
             const userPrompt = visualizationPrompt
