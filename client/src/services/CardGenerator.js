@@ -62,10 +62,25 @@ export class ChakraComponentGenerator {
         analysis,
       });
 
-      return response.data;
+      // Ensure the response includes proper formatting information
+      const component = response.data;
+      
+      // Add default formatting if not present
+      if (component.type === 'metric') {
+        component.format = component.format || {};
+        component.format.decimals = component.format.decimals || 0;
+        component.format.style = component.format.style || 'decimal';
+      }
+      
+      // Ensure proper alignment for tables
+      if (component.type === 'table') {
+        component.alignment = component.alignment || 
+          new Array(component.headers.length).fill('left');
+      }
+
+      return component;
     } catch (error) {
       console.error('Error processing Chakra component:', error);
-      // Return null for failed components
       return null;
     }
   }

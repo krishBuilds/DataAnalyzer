@@ -25,16 +25,36 @@ const DataAnalyzer = require('./BasicDataAnalysis');
 const ChakraComponentGenerator = require('./ChakraComponentGenerator');
 
 // Validate environment variables
-if (!process.env.OPENAI_API_KEY) {
-    console.error('ERROR: OPENAI_API_KEY is not set in environment variables');
+if (!process.env.OPENAI_API_KEY && !process.env.GROQ_API_KEY) {
+    console.error('ERROR: Neither OPENAI_API_KEY nor GROQ_API_KEY is set in environment variables');
     process.exit(1);
 }
 
 const app = express();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Configure AI client based on environment variables
+let aiClient;
+if (process.env.USE_TOGETHER === 'true') {
+    aiClient = new OpenAI({
+        baseURL: "https://api.together.xyz/v1",
+        apiKey: process.env.TOGETHER_API_KEY,
+        defaultQuery: { 
+            'model': 'meta-llama/Llama-3.3-70B-Instruct-Turbo'
+        }
+    });
+} else if (process.env.USE_GROQ === 'true') {
+    const model = process.env.GROQ_MODEL || 'mixtral-8x7b-32768';
+    aiClient = new OpenAI({
+        baseURL: "https://api.groq.com/openai/v1",
+        apiKey: process.env.GROQ_API_KEY,
+        defaultQuery: { 'model': model }
+    });
+} else {
+    aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 // Initialize the plot suggestor
-const plotSuggestor = new PlotSuggestor(openai);
+const plotSuggestor = new PlotSuggestor(aiClient);
 
 // Middleware for debugging requests
 app.use((req, res, next) => {
@@ -45,11 +65,11 @@ app.use((req, res, next) => {
 app.use(bodyParser.json({limit: '100mb'}));
 app.use(bodyParser.urlencoded({limit: '100mb', extended: true}));
 
-app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:8080',
-    methods: ['GET', 'POST'],
-    credentials: true
-}));
+ app.use(cors({
+     origin: process.env.CORS_ORIGIN || 'http://localhost:8080',
+     methods: ['GET', 'POST'],
+     credentials: true
+ }));
 
 // Error handling middleware with detailed logging
 app.use((err, req, res, next) => {
@@ -359,17 +379,19 @@ ${JSON.stringify(sampleRows.map(row => {
     return cleanRow;
   }), null, 2)}`}
 
-Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample.
+Note: Your code will receive the ENTIRE dataset (${currentData.length} rows) as input, not just this sample while executing.
 ${isVisualization ? 'Create a visualization based on the user request. Create plots that actually help user understand the data, dont add unnecessary complexity to the plot. Keep note of the numerical values, and ensure quality plots with good data representation. Dont use flashy colors, relevant and graph related colors. Graph should somehow help user in identifying trends if possible and make the data come in a meaningful way in a sequential way. The numerical value should be represented in consistent way and not haphazard way and dont make too many assumption about the data. ' : 'Process the data according to the user request and give.'}
 
 Task: ${question}`;
 
-    const codeCompletion = await openai.chat.completions.create({
+    const codeCompletion = await aiClient.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      model: "gpt-4o-mini",
+      model: process.env.USE_TOGETHER === 'true' 
+        ? 'meta-llama/Llama-3.3-70B-Instruct-Turbo'
+            : "gpt-4o-mini",
     });
 
     // Get and save Python code
@@ -606,7 +628,7 @@ app.post('/api/clean/suggest', async (req, res) => {
     const { data, question } = req.body;
     const processedData = prepareDataForProcessing(data);
     
-    const cleaningHandler = new DataCleaningRequest(openai);
+    const cleaningHandler = new DataCleaningRequest(aiClient);
     const result = await cleaningHandler.process(question, processedData);
     // Store the handler instance in app.locals for later use
     app.locals.cleaningHandler = cleaningHandler;
@@ -625,7 +647,7 @@ app.post('/api/clean/execute', async (req, res) => {
     const { data, suggestions, context, previousError } = req.body;
     const processedData = prepareDataForProcessing(data);
     
-    const cleaningHandler = app.locals.cleaningHandler || new DataCleaningRequest(openai);
+    const cleaningHandler = app.locals.cleaningHandler || new DataCleaningRequest(aiClient);
     const result = await cleaningHandler.executeCleaning(processedData, suggestions);
     
     res.json({
@@ -690,13 +712,13 @@ ${JSON.stringify(sampleData, null, 2)}
 
 Generate a clear, professional title that describes this dataset's content.`;
 
-    const completion = await openai.chat.completions.create({
+    const completion = await aiClient.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      model: "gpt-4o-mini",
-      temperature: 0.3,
+      model: process.env.USE_GROQ === 'true' ? process.env.GROQ_MODEL : "gpt-4o-mini",
+      temperature: 0.4,
       max_tokens: 60
     });
 
@@ -875,7 +897,7 @@ app.post('/api/flows/execute-with-file', upload.single('file'), async (req, res)
 app.post('/api/dashboard/get-suggestions', async (req, res) => {
   try {
     const { data, headers, analysis, config } = req.body;
-    const dashboardGenerator = new DashboardGenerator(openai);
+    const dashboardGenerator = new DashboardGenerator(aiClient);
     const result = await dashboardGenerator.getVisualizationSuggestions(
       data, 
       headers, 
@@ -892,7 +914,7 @@ app.post('/api/dashboard/get-suggestions', async (req, res) => {
 app.post('/api/dashboard/generate-visualizations', async (req, res) => {
   try {
     const { data, suggestions, analysis, config } = req.body;
-    const dashboardGenerator = new DashboardGenerator(openai);
+    const dashboardGenerator = new DashboardGenerator(aiClient);
     const result = await dashboardGenerator.generateVisualizations(data, suggestions, analysis, config);
     res.json(result);
   } catch (error) {
@@ -972,14 +994,17 @@ Explain the results in a clear, focused way that directly addresses the user's q
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    const stream = await openai.chat.completions.create({
+    const stream = await aiClient.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      model: "gpt-4o-mini",
+      model: process.env.USE_TOGETHER === 'true' 
+        ? 'meta-llama/Llama-3.3-70B-Instruct-Turbo'
+         
+            : "gpt-4o-mini",
       stream: true,
-      temperature: 0.3, // Lower temperature for more focused responses
+      temperature: 0.3,
       max_tokens: 1000
     });
 

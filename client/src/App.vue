@@ -74,7 +74,7 @@ export default {
     DataTable,
     ChatAnalysisBoard,
     AnalysisDashboard,
-    DashboardGenerator
+    DashboardGenerator,
   },
   data() {
     return {

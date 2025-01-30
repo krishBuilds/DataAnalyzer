@@ -37,81 +37,63 @@
         <div v-if="chakraComponents.length && !isGenerating" class="chakra-section">
           <div class="chakra-grid">
             <div 
-              v-for="(component, index) in chakraComponents" 
+              v-for="(component, index) in chakraComponents"
               :key="`chakra-${index}`"
               class="chakra-card"
             >
-              <div class="card-header">
-                <h4>{{ component.title }}</h4>
-              </div>
-              <div class="card-content">
-                <!-- Enhanced Metric Display -->
-                <template v-if="component.type === 'metric'">
-                  <div class="metric-value">
-                    {{ formatMetricValue(component) }}
-                  </div>
-                  <div class="metric-label">{{ component.label }}</div>
-                  <div 
-                    v-if="component.change" 
-                    :class="['change-indicator', component.change.type]"
-                  >
-                    <i :class="getChangeIcon(component.change.type)"></i>
-                    {{ formatChange(component.change) }}
-                  </div>
-                </template>
+              <!-- Metric Component -->
+              <template v-if="component.type === 'metric'">
+                <div class="card-header">
+                  <h4>{{ component.title }}</h4>
+                </div>
+                <div class="metric-value">{{ formatMetricValue(component) }}</div>
+                <div class="metric-label">{{ component.label }}</div>
+              </template>
 
-                <!-- Enhanced List Display -->
-                <template v-if="component.type === 'list'">
-                  <ul class="list-content">
-                    <li 
-                      v-for="(item, i) in component.items" 
-                      :key="i"
-                      class="list-item"
-                    >
-                      <div class="list-item-content">
-                        <span class="list-item-label">{{ item.label }}</span>
-                        <span class="list-item-value">{{ item.value }}</span>
+              <!-- List Component -->
+              <template v-if="component.type === 'list'">
+                <div class="card-header">
+                  <h4>{{ component.title }}</h4>
+                </div>
+                <ul class="list-content">
+                  <li v-for="(item, i) in component.items" :key="i">
+                    <div class="list-item">
+                      <div>
+                        <div>{{ item.label }}</div>
+                        <div class="list-item-value">{{ item.value }}</div>
                       </div>
-                      <div 
-                        v-if="item.change"
-                        :class="['list-item-change', item.change.type]"
-                      >
-                        {{ item.change }}
+                      <div v-if="item.change" class="change-indicator">
+                        {{ formatChange(item.change) }}
                       </div>
-                    </li>
-                  </ul>
-                </template>
+                    </div>
+                  </li>
+                </ul>
+              </template>
 
-                <!-- Enhanced Table Display -->
-                <template v-if="component.type === 'table'">
-                  <div class="table-wrapper">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th 
-                            v-for="(header, i) in component.headers" 
-                            :key="i"
-                            :class="getColumnAlignment(component.alignment, i)"
-                          >
-                            {{ header }}
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="(row, i) in component.rows" :key="i">
-                          <td 
-                            v-for="(cell, j) in row" 
-                            :key="j"
-                            :class="getColumnAlignment(component.alignment, j)"
-                          >
-                            {{ cell }}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </template>
-              </div>
+              <!-- Table Component -->
+              <template v-if="component.type === 'table'">
+                <div class="card-header">
+                  <h4>{{ component.title }}</h4>
+                </div>
+                <div class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th v-for="(header, i) in component.headers" :key="i">
+                          {{ header }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, i) in component.rows" :key="i">
+                        <td v-for="(cell, j) in row" :key="j">
+                          {{ cell }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -225,6 +207,8 @@ import { ChakraComponentGenerator } from '../services/CardGenerator';
 
 export default {
   name: 'DashboardGenerator',
+  components: {
+  },
   data() {
     return {
       config: {
@@ -662,22 +646,30 @@ export default {
       const { value, format = {} } = component;
       let formattedValue = value;
 
-      // Apply number formatting if needed
       if (typeof value === 'number') {
-        formattedValue = Number(value).toLocaleString(undefined, {
-          minimumFractionDigits: format.decimals || 0,
-          maximumFractionDigits: format.decimals || 0
-        });
+        try {
+          formattedValue = Number(value).toLocaleString(undefined, {
+            minimumFractionDigits: format.decimals || 0,
+            maximumFractionDigits: format.decimals || 0,
+            style: format.style,
+            currency: format.currency,
+          });
+        } catch (error) {
+          console.warn('Error formatting number:', error);
+        }
       }
 
-      // Add prefix/suffix
       return `${format.prefix || ''}${formattedValue}${format.suffix || ''}`;
     },
 
     formatChange(change) {
       if (!change) return '';
+      
       const prefix = change.type === 'positive' ? '+' : '';
-      const value = change.percentage ? `${prefix}${change.value}%` : `${prefix}${change.value}`;
+      const value = change.percentage ? 
+        `${prefix}${change.value}%` : 
+        `${prefix}${change.value}`;
+      
       return value;
     },
 
@@ -690,8 +682,21 @@ export default {
     },
 
     getColumnAlignment(alignment = [], index) {
-      return alignment[index] || 'left';
-    }
+      const align = alignment[index] || 'left';
+      return {
+        left: 'start',
+        right: 'end',
+        center: 'center'
+      }[align] || 'start';
+    },
+
+    getChangeColor(type) {
+      return {
+        positive: 'green.500',
+        negative: 'red.500',
+        neutral: 'gray.500'
+      }[type] || 'gray.500'
+    },
   }
 }
 </script>
