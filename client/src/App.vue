@@ -51,7 +51,6 @@
         <DataTable 
           v-if="currentPage === 'data-table'" 
           ref="dataTable"
-          @beforeDestroy="handleDataTableDestroy"
         />
         <DashboardGenerator
           v-if="currentPage === 'dashboard-generator'"
@@ -102,36 +101,15 @@ export default {
         this.showAnalysisDashboard = true;
       }
     },
-    handleDataTableDestroy() {
-      if (this.$refs.dataTable) {
-        this.$refs.dataTable.cleanup();
-      }
-    },
     handleDashboardGeneration(config) {
       this.dashboardConfig = config;
       this.currentPage = 'analysis-board';
       this.showAnalysisDashboard = true;
-      // You can pass this config to AnalysisDashboard component as needed
     }
   },
   watch: {
-    async currentPage(newPage, oldPage) {
-      if (oldPage === 'data-table') {
-        try {
-          await this.$nextTick();
-          if (this.$refs.dataTable) {
-            await new Promise(resolve => {
-              this.$refs.dataTable.cleanup();
-              resolve();
-            });
-          }
-        } catch (error) {
-          console.warn('Error during DataTable cleanup:', error);
-        }
-      }
-      
+    async currentPage(newPage) {
       if (newPage === 'data-table') {
-        // Recover state if coming back from analysis board
         const savedState = sessionStorage.getItem('tableState');
         if (savedState) {
           const state = JSON.parse(savedState);
@@ -140,6 +118,17 @@ export default {
             this.$refs.dataTable.updateTableData(state.data);
           }
           sessionStorage.removeItem('tableState');
+        }
+      }
+      else if (newPage === 'dashboard-generator') {
+        const savedState = sessionStorage.getItem('dashboardState');
+        if (savedState) {
+          const state = JSON.parse(savedState);
+          await this.$nextTick();
+          if (this.$refs.dashboardGenerator) {
+            this.$refs.dashboardGenerator.restoreState(state);
+          }
+          sessionStorage.removeItem('dashboardState');
         }
       }
     }

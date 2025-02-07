@@ -245,49 +245,41 @@ export default {
              !this.isAnalyzing
     }
   },
-  async beforeMount() {
-    try {
-      // Clean up any existing Handsontable instances
-      const hotInstances = document.querySelectorAll('.handsontable');
-      for (const instance of hotInstances) {
-        if (instance.__handsontable) {
-          try {
-            const hot = instance.__handsontable;
-            // Remove all hooks
-            hot.removeHook('afterChange');
-            hot.removeHook('afterSelection');
-            hot.removeHook('afterDeselect');
-            hot.removeHook('afterRender');
-            // Destroy instance
-            hot.destroy();
-            // Clear reference
-            instance.__handsontable = null;
-          } catch (error) {
-            console.warn('Error cleaning up Handsontable instance:', error);
-          }
-        }
-      }
-
-      // Clear any remaining Handsontable global references
-      if (window.Handsontable) {
-        window.Handsontable.hooks.clear();
-      }
-
-      // Wait for cleanup to complete
-      await this.$nextTick();
-    } catch (error) {
-      console.error('Error in beforeMount cleanup:', error);
-    }
+  beforeMount() {
+    // Remove Handsontable cleanup logic
   },
   mounted() {
     // Initialize only after ensuring cleanup
-    this.$nextTick(() => {
+    this.$nextTick(async () => {
+      // Check for saved dashboard data
+      const savedState = sessionStorage.getItem('dashboardData');
+      if (savedState) {
+        try {
+          const parsedState = JSON.parse(savedState);
+          if (parsedState.modified) {
+            // Clear the saved state to prevent reuse
+            sessionStorage.removeItem('dashboardData');
+            
+            // Set the data
+            this.processedData = parsedState.data;
+            
+            // Perform initial analysis
+            await this.performBackgroundAnalysis();
+            
+            // Mark as ready for dashboard generation
+            this.analysisComplete = true;
+          }
+        } catch (error) {
+          console.error('Error restoring dashboard state:', error);
+        }
+      }
+      
       this.initializeGridStack();
       window.addEventListener('resize', this.handleResize);
     });
   },
   beforeUnmount() {
-    // Clean up resize observers
+    // Only clean up resize observers
     if (this.grid) {
       const items = this.grid.getGridItems();
       items.forEach(item => {
@@ -383,9 +375,13 @@ export default {
       gridElement.innerHTML = '';
 
       try {
+        // Add margin styles to the grid container
+        gridElement.style.width = '80%';  // Reduce width by 20%
+        gridElement.style.margin = '0 10%';  // Add 10% margin on each side
+        
         this.grid = GridStack.init({
           column: 12,
-          cellHeight: 50,
+          cellHeight: 60, // Increased from 50 to make charts taller
           float: true,
           animate: true,
           minRow: 1,
@@ -396,7 +392,7 @@ export default {
           resizable: {
             handles: 'all'
           },
-          margin: 5
+          margin: 15 // Increased margin between items
         });
 
         this.grid.on('resizestop', (event, element) => {
@@ -412,7 +408,6 @@ export default {
     createChartWidget(component, index) {
       const widgetContainer = document.createElement('div');
       widgetContainer.className = 'grid-stack-item';
-      // Add title section above the chart
       widgetContainer.innerHTML = `
         <div class="grid-stack-item-content">
           <div class="chart-title">${component.title || ''}</div>
@@ -420,9 +415,13 @@ export default {
         </div>
       `;
 
+      // Increase base size to prevent scrolling
+      const baseHeight = component.size?.h || 6;
+      const adjustedHeight = Math.ceil(baseHeight * 1.2);
+
       const gridItem = this.grid.addWidget({
         w: component.size?.w || 6,
-        h: component.size?.h || 6,
+        h: adjustedHeight,
         autoPosition: true,
         el: widgetContainer,
         minW: 3,
@@ -431,25 +430,52 @@ export default {
 
       const container = widgetContainer.querySelector('.chart-container');
 
+      // Create and configure the plot with proper sizing
       const resizeObserver = new ResizeObserver(entries => {
         for (const entry of entries) {
           if (entry.target === widgetContainer && gridItem.plotContainer) {
             if (document.body.contains(gridItem.plotContainer)) {
+              const titleHeight = widgetContainer.querySelector('.chart-title')?.offsetHeight || 0;
+              const padding = 30; // Account for padding and margins
+              
               const layout = {
                 ...component.content?.layout,
-                autosize: true,
-                width: entry.contentRect.width,
-                height: entry.contentRect.height - 40
+                autosize: false,
+                width: entry.contentRect.width - padding,
+                height: entry.contentRect.height - titleHeight - padding,
               };
+
               Plotly.relayout(gridItem.plotContainer, layout);
             }
           }
         }
       });
-      
+
       resizeObserver.observe(widgetContainer);
       gridItem.resizeObserver = resizeObserver;
       gridItem.plotContainer = container;
+
+      // Initial plot creation with proper config
+      if (component.content) {
+        const config = {
+          responsive: true,
+          displayModeBar: false, // Hide the modebar
+          staticPlot: false // Allow interactivity but prevent scrolling
+        };
+
+        Plotly.newPlot(
+          container,
+          component.content.data,
+          {
+            ...component.content.layout,
+            autosize: false,
+            margin: { t: 10, r: 10, b: 40, l: 50 },
+            paper_bgcolor: 'transparent',
+            plot_bgcolor: 'transparent'
+          },
+          config
+        );
+      }
 
       return gridItem;
     },
@@ -639,6 +665,7 @@ export default {
         this.analysisComplete = true;
       } catch (error) {
         console.error('Analysis error:', error);
+        throw error;
       }
     },
 
@@ -697,6 +724,33 @@ export default {
         neutral: 'gray.500'
       }[type] || 'gray.500'
     },
+
+    saveState() {
+      const state = {
+        config: this.config,
+        processedData: this.processedData,
+        basicAnalysis: this.basicAnalysis,
+        dashboardComponents: this.dashboardComponents,
+        chakraComponents: this.chakraComponents
+      };
+      sessionStorage.setItem('dashboardState', JSON.stringify(state));
+    },
+    
+    restoreState(state) {
+      this.config = state.config;
+      this.processedData = state.processedData;
+      this.basicAnalysis = state.basicAnalysis;
+      this.dashboardComponents = state.dashboardComponents;
+      this.chakraComponents = state.chakraComponents;
+      this.$nextTick(() => {
+        this.initializeGridStack();
+        this.renderCharts();
+      });
+    }
+  },
+  beforeRouteLeave(to, from, next) {
+    this.saveState();
+    next();
   }
 }
 </script>
@@ -916,23 +970,28 @@ h3 {
 .grid-stack {
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
+  left: 20px;
+  right: 20px;
   bottom: 0;
   min-height: 100%;
+  background: #f5f5f5;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  width: 80% !important;
+  margin: 0 10% !important;
 }
 
 /* Plotly tile appearance */
 .grid-stack-item-content {
   position: relative;
-  height: 100%;
-  width: 100%;
-  background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
-              0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  padding: 5px;
-  overflow: hidden;
+  height: 100% !important;
+  width: 100% !important;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  overflow: hidden !important; /* Prevent scrolling */
   display: flex;
   flex-direction: column;
   transition: box-shadow 0.3s ease;
@@ -946,10 +1005,11 @@ h3 {
 /* Make sure the chart fills the tile, and remove scrollbars from Plotly content. */
 .chart-container {
   flex: 1;
-  height: 100%;
-  background: #ffffff;
-  border-radius: 8px;
-  overflow: hidden; /* Removes the scrollbar within each plot */
+  position: relative;
+  width: 100% !important;
+  height: calc(100% - 30px) !important; /* Subtract title height */
+  border-radius: 6px;
+  overflow: hidden !important;
 }
 
 .grid-stack > .grid-stack-item > .grid-stack-item-content {
@@ -1119,11 +1179,14 @@ h3 {
 }
 
 .chart-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a202c;
-  padding: 8px 8px 12px 8px;
-  background: #ffffff;
+  font-size: 1.1em;
+  font-weight: 500;
+  margin-bottom: 10px;
+  color: #333;
+  height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chart-container {
@@ -1343,5 +1406,21 @@ td {
 
 .text-center {
   text-align: center;
+}
+
+/* Ensure plotly elements fit properly */
+:deep(.js-plotly-plot) {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+:deep(.plotly) {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+:deep(.plot-container) {
+  width: 100% !important;
+  height: 100% !important;
 }
 </style> 

@@ -2,6 +2,7 @@ export class HandsontableOperations {
     constructor() {
         this.data = [];
         this.headers = [];
+        this.columns = [];
         this.selectedRows = new Set();
         this.changedRows = new Set();
         this.history = [];
@@ -35,26 +36,23 @@ export class HandsontableOperations {
         return this.headers;
     }
 
-    updateData(newData) {
-        if (!newData || !newData.length) return;
-        
-        // Update data immediately instead of chunking for cleaning operations
-        this.data = newData.map((row, index) => ({
-            ...row,
-            __id: index
-        }));
-        
-        // Update headers if they've changed
-        const newHeaders = Object.keys(newData[0] || {}).filter(key => !key.startsWith('__'));
-        if (JSON.stringify(this.headers) !== JSON.stringify(newHeaders)) {
-            this.headers = newHeaders;
-        }
-        
-        this.saveState();
+    getCurrentState() {
         return {
-            data: this.data,
-            headers: this.headers
+            data: JSON.parse(JSON.stringify(this.data)),
+            headers: [...this.headers],
+            selectedRows: new Set([...this.selectedRows]),
+            changedRows: new Set([...this.changedRows])
         };
+    }
+
+    updateData(newData) {
+        if (!newData) return false;
+        this.data = JSON.parse(JSON.stringify(newData));
+        if (newData.length > 0) {
+            this.headers = Object.keys(newData[0]);
+            this.columns = this.headers.map(header => ({ data: header }));
+        }
+        return true;
     }
 
     handleCellUpdate(row, prop, newValue) {
@@ -138,17 +136,16 @@ export class HandsontableOperations {
     }
 
     saveState() {
+        const state = this.getCurrentState();
+        
+        // Remove any future states if we're in the middle of the history
         if (this.currentHistoryIndex < this.history.length - 1) {
             this.history = this.history.slice(0, this.currentHistoryIndex + 1);
         }
         
-        this.history.push({
-            data: JSON.parse(JSON.stringify(this.data)),
-            headers: [...this.headers],
-            selectedRows: new Set([...this.selectedRows]),
-            changedRows: new Set([...this.changedRows])
-        });
+        this.history.push(state);
         this.currentHistoryIndex++;
+        return true;
     }
 
     undo() {

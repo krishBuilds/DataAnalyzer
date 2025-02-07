@@ -333,7 +333,7 @@ export default {
     MonacoEditor,
     ChatFlows  // Use ChatFlows instead of FlowsOverlay
   },
-  emits: ['update:debugMode', 'beforeUnmount'], // Add emits declaration
+  emits: ['update:debugMode', 'beforeDestroy'], // Add emits declaration
   data() {
     return {
       gridOperations: new HandsontableOperations(),
@@ -448,8 +448,14 @@ export default {
     // this.chatFlows = ChatFlows;
   },
   computed: {
-    changedRows() {
-      return this.gridOperations?.getChangedRows() || [];
+    changedRows: {
+      get() {
+        return this._changedRows;
+      },
+      set() {
+        // Prevent direct modification
+        console.warn('changedRows is read-only');
+      }
     },
     canUndo() {
       return this.gridOperations?.currentHistoryIndex > 0;
@@ -490,12 +496,10 @@ export default {
     });
   },
   beforeUnmount() {
-    // Ensure cleanup when component is destroyed
+    // Remove cleanup logic, only keep essential cleanup
     if (this.showFlowsOverlay) {
       this.closeFlows();
     }
-    this.cleanup();
-    this.destroyHandsontable();
   },
   methods: {
     onResize() {
@@ -513,17 +517,27 @@ export default {
         const currentData = this.$refs.hotTable.hotInstance.getData();
         const currentHeaders = this.gridOperations.getHeaders();
         
-        // Save complete state
-        const newState = {
-          data: JSON.parse(JSON.stringify(currentData)), // Deep copy to prevent reference issues
-          headers: [...currentHeaders],
-          selectedRows: new Set([...this.gridOperations.getSelectedRows()]),
-          changedRows: new Set([...this.gridOperations.getChangedRows()])
-        };
+        // Get previous state
+        const previousState = this.gridOperations.getCurrentState();
         
-        // Update grid operations with complete state
-        this.gridOperations.updateData(newState.data);
-        this.gridOperations.saveState();
+        // Check if there's an actual difference in data
+        const hasDataChanged = this.isDataDifferent(currentData, previousState?.data);
+        const hasHeadersChanged = this.isArrayDifferent(currentHeaders, previousState?.headers);
+        
+        // Only save state if there's an actual difference
+        if (hasDataChanged || hasHeadersChanged) {
+          // Save complete state
+          const newState = {
+            data: JSON.parse(JSON.stringify(currentData)), // Deep copy to prevent reference issues
+            headers: [...currentHeaders],
+            selectedRows: new Set([...this.gridOperations.getSelectedRows()]),
+            changedRows: new Set([...this.gridOperations.getChangedRows()])
+          };
+          
+          // Update grid operations with complete state
+          this.gridOperations.updateData(newState.data);
+          this.gridOperations.saveState();
+        }
       }
     },
 
@@ -927,12 +941,22 @@ export default {
     addToHistory(state) {
       if (!state || !state.data) return;
 
-      // Remove any future states if we're in the middle of the history
-      if (this.gridOperations.currentHistoryIndex < this.gridOperations.history.length - 1) {
-        this.gridOperations.history = this.gridOperations.history.slice(0, this.gridOperations.currentHistoryIndex + 1);
-      }
+      // Get previous state
+      const previousState = this.gridOperations.getCurrentState();
+      
+      // Check if there's an actual difference
+      const hasDataChanged = this.isDataDifferent(state.data, previousState?.data);
+      const hasHeadersChanged = this.isArrayDifferent(state.headers, previousState?.headers);
 
-      this.gridOperations.saveState();
+      // Only add to history if there's a difference
+      if (hasDataChanged || hasHeadersChanged) {
+        // Remove any future states if we're in the middle of the history
+        if (this.gridOperations.currentHistoryIndex < this.gridOperations.history.length - 1) {
+          this.gridOperations.history = this.gridOperations.history.slice(0, this.gridOperations.currentHistoryIndex + 1);
+        }
+
+        this.gridOperations.saveState();
+      }
     },
     
     undo() {
@@ -1464,76 +1488,6 @@ export default {
       this.dataTitle = null;
     },
 
-    destroyHandsontable() {
-      // Remove event listeners
-      window.removeEventListener('resize', this.onResize);
-      window.removeEventListener('mousemove', this.handleResize);
-      window.removeEventListener('mouseup', this.stopResize);
-      window.removeEventListener('keydown', this.handleKeyDown);
-      window.removeEventListener('keyup', this.handleKeyUp);
-
-      // Save current state before destroying
-      const currentData = this.gridOperations.getData();
-      const currentHeaders = this.gridOperations.getHeaders();
-
-      // Destroy Handsontable instance
-      if (this.$refs.hotTable?.hotInstance) {
-        const hot = this.$refs.hotTable.hotInstance;
-        if (hot && !hot.isDestroyed) {
-          try {
-            hot.destroy();
-          } catch (error) {
-            console.warn('Error destroying Handsontable:', error);
-          }
-        }
-      }
-
-      // Clear data structures
-      this.hotSettings.data = [];
-      this.hotSettings.columns = [];
-      this.hotSettings.colHeaders = [];
-      
-      // Reset grid operations with saved state
-      this.gridOperations = new HandsontableOperations();
-      if (currentData.length && currentHeaders.length) {
-        this.gridOperations.updateData(currentData);
-        this.gridOperations.setHeaders(currentHeaders);
-      }
-
-      this.isDestroyed = true;
-    },
-
-    cleanup() {
-      // Remove event listeners first
-      window.removeEventListener('resize', this.onResize);
-      window.removeEventListener('mousemove', this.handleResize);
-      window.removeEventListener('mouseup', this.stopResize);
-      window.removeEventListener('keydown', this.handleKeyDown);
-      window.removeEventListener('keyup', this.handleKeyUp);
-
-      // Clear all data
-      this.clearData();
-      
-      // Set destroyed flag
-      this.isDestroyed = true;
-      
-      // Destroy Handsontable instance last
-      if (this.$refs.hotTable?.hotInstance) {
-        try {
-          this.$refs.hotTable.hotInstance.destroy();
-        } catch (error) {
-          console.warn('Error destroying Handsontable:', error);
-        }
-      }
-    },
-
-    beforeUnmount() {
-      // Cleanup Handsontable instance
-      if (this.$refs.hotTable && this.$refs.hotTable.hotInstance) {
-        this.$refs.hotTable.hotInstance.destroy();
-      }
-    },
-
     captureFlow() {
       const messagesToCapture = this.chatMessages.map(msg => ({
         type: msg.type,
@@ -1817,43 +1771,22 @@ export default {
     },
 
     async cleanupHandsontable() {
-      try {
-        // Clear all data first
-        if (this.gridOperations) {
-          this.gridOperations.clearData();
+      if (this.$refs.hotTable?.hotInstance) {
+        const hot = this.$refs.hotTable.hotInstance;
+        if (hot && !hot.isDestroyed) {
+          // Save current state
+          const currentData = hot.getData();
+          sessionStorage.setItem('tableState', JSON.stringify({
+            data: currentData,
+            headers: this.headers
+          }));
+          
+          // Remove event listeners
+          hot.removeHook('afterChange');
+          hot.removeHook('afterSelection');
+          hot.removeHook('afterDeselect');
+          hot.removeHook('afterRender');
         }
-
-        // Destroy Handsontable instance
-        if (this.$refs.hotTable?.hotInstance) {
-          const hot = this.$refs.hotTable.hotInstance;
-          if (hot && !hot.isDestroyed) {
-            // Remove all event listeners
-            hot.removeHook('afterChange');
-            hot.removeHook('afterSelection');
-            hot.removeHook('afterDeselect');
-            hot.removeHook('afterRender');
-            
-            // Destroy the instance
-            hot.destroy();
-            
-            // Clear the reference
-            this.$refs.hotTable.hotInstance = null;
-          }
-        }
-
-        // Clear all data structures
-        this.hotSettings = null;
-        this.tableData = [];
-        this.headers = [];
-        
-        this.chatMessages = [];
-        this.fileName = '';
-        this.dataTitle = null;
-
-        // Wait for Vue to process these changes
-        await this.$nextTick();
-      } catch (error) {
-        console.warn('Error during cleanup:', error);
       }
     },
 
@@ -1862,6 +1795,18 @@ export default {
       try {
         // Set loading state
         this.loading = true;
+
+        // Get current data and headers
+        const currentData = this.gridOperations.getData();
+        const headers = this.gridOperations.getHeaders();
+
+        // Save complete state
+        sessionStorage.setItem('dashboardData', JSON.stringify({
+          data: currentData,
+          headers: headers,
+          modified: true,
+          timestamp: Date.now()
+        }));
 
         // Cleanup Handsontable
         await this.cleanupHandsontable();
@@ -1878,30 +1823,39 @@ export default {
       }
     },
 
-    // Update route guard to be more robust
-    async beforeRouteLeave(to, from, next) {
-      try {
-        // Set loading state
-        this.loading = true;
-
-        // Cleanup Handsontable
-        await this.cleanupHandsontable();
-
-        // Wait for cleanup to complete
-        await this.$nextTick();
-
-        // Clear any remaining timeouts
-        if (this._closeFlowsTimer) {
-          clearTimeout(this._closeFlowsTimer);
+    // Add this method to handle data frame updates
+    handleDataFrameUpdate(newData) {
+      this.$nextTick(() => {
+        if (this.$refs.hotTable?.hotInstance) {
+          this.$refs.hotTable.hotInstance.loadData(newData);
+          this.$refs.hotTable.hotInstance.render();
         }
+      });
+    },
 
-        next();
-      } catch (error) {
-        console.error('Error during navigation cleanup:', error);
-        this.loading = false;
-        next(false);
-      }
-    }
+    // Add helper methods to check for differences
+    isDataDifferent(newData, oldData) {
+      if (!oldData || !newData) return true;
+      if (newData.length !== oldData.length) return true;
+      
+      return newData.some((row, rowIndex) => {
+        if (!oldData[rowIndex]) return true;
+        return Object.keys(row).some(key => {
+          // Handle both undefined and null values
+          const oldVal = oldData[rowIndex][key];
+          const newVal = row[key];
+          if (oldVal === newVal) return false;
+          if (!oldVal && !newVal) return false;
+          return true;
+        });
+      });
+    },
+
+    isArrayDifferent(arr1, arr2) {
+      if (!arr1 || !arr2) return true;
+      if (arr1.length !== arr2.length) return true;
+      return arr1.some((item, index) => item !== arr2[index]);
+    },
   },
 
   // Add watcher for showFlowsOverlay
@@ -1927,6 +1881,23 @@ export default {
       }
     }
   },
+
+  // Add this to preserve table state
+  beforeRouteLeave(to, from, next) {
+    try {
+      if (this.$refs.hotTable?.hotInstance) {
+        const currentData = this.$refs.hotTable.hotInstance.getData();
+        sessionStorage.setItem('tableState', JSON.stringify({
+          data: currentData,
+          headers: this.headers
+        }));
+      }
+      next();
+    } catch (error) {
+      console.error('Error during navigation:', error);
+      next(false);
+    }
+  }
 }
 </script>
 

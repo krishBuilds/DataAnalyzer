@@ -34,7 +34,7 @@ const app = express();
 
 // Configure AI client based on environment variables
 let aiClient;
-if (process.env.USE_TOGETHER === 'true') {
+/*if (process.env.USE_TOGETHER === 'true') {
     aiClient = new OpenAI({
         baseURL: "https://api.together.xyz/v1",
         apiKey: process.env.TOGETHER_API_KEY,
@@ -42,16 +42,10 @@ if (process.env.USE_TOGETHER === 'true') {
             'model': 'meta-llama/Llama-3.3-70B-Instruct-Turbo'
         }
     });
-} else if (process.env.USE_GROQ === 'true') {
-    const model = process.env.GROQ_MODEL || 'mixtral-8x7b-32768';
-    aiClient = new OpenAI({
-        baseURL: "https://api.groq.com/openai/v1",
-        apiKey: process.env.GROQ_API_KEY,
-        defaultQuery: { 'model': model }
-    });
+
 } else {
-    aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-}
+  */  aiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+//}
 
 // Initialize the plot suggestor
 const plotSuggestor = new PlotSuggestor(aiClient);
@@ -93,20 +87,24 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir);
 }
 
-// Add this helper function to prepare data by removing last row
+// Update the helper function to not remove the last row
 function prepareDataForProcessing(data) {
   if (!Array.isArray(data) || data.length === 0) {
     return [];
   }
-  // Remove the last row from the data
-  return data.slice(0, -1);
+  // Return the full data array
+  return [...data];
 }
 
-// New endpoint to upload initial data
+// Update the /api/upload endpoint to handle empty rows properly
 app.post('/api/upload', async (req, res) => {
   try {
     const { data } = req.body;
-    const processedData = prepareDataForProcessing(data);
+    // Filter out any completely empty rows instead of removing last row
+    const processedData = data.filter(row => {
+      if (!row) return false;
+      return Object.values(row).some(value => value !== null && value !== undefined && value !== '');
+    });
     currentData = processedData;
     res.json({ message: 'Data uploaded successfully' });
   } catch (error) {
@@ -710,15 +708,15 @@ The title should:
 Sample Data:
 ${JSON.stringify(sampleData, null, 2)}
 
-Generate a clear, professional title that describes this dataset's content.`;
+Generate a clear, professional title that describes this dataset's content. It should decribe what data represents here`;
 
     const completion = await aiClient.chat.completions.create({
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ],
-      model: process.env.USE_GROQ === 'true' ? process.env.GROQ_MODEL : "gpt-4o-mini",
-      temperature: 0.4,
+      model:  "gpt-4o-mini",
+      temperature: 0.6,
       max_tokens: 60
     });
 
