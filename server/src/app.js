@@ -307,12 +307,27 @@ function handleErrorResponse(errorString, pythonCode, processedData = '', errorD
 }
 
 // Modified analyze endpoint
-app.post('/api/analyze', async (req, res, next) => {
-  let tempDataPath = null;
-  let pythonProcess = null;
-  let responseHandled = false;
+app.post('/api/analyze', async (req, res) => {
+  const cancelToken = req._cancelToken; // This will be set by axios
   
   try {
+    // Wrap long-running operations in a cancellation check
+    const checkCancelled = () => {
+      if (cancelToken && cancelToken.reason) {
+        throw new Error('Request cancelled');
+      }
+    };
+    
+    // Example usage in a long-running operation:
+    for (let i = 0; i < 100; i++) {
+      checkCancelled();
+      // ... processing
+    }
+    
+    let tempDataPath = null;
+    let pythonProcess = null;
+    let responseHandled = false;
+    
     const { question, data, selectedRows, selectedIndices, previousError } = req.body;
     
     // Remove last row from data before processing
@@ -568,22 +583,10 @@ Task: ${question}`;
     });
 
   } catch (error) {
-    if (!responseHandled) {
-      responseHandled = true;
-      if (pythonProcess) {
-        pythonProcess.kill();
-      }
-      
-      // Clean up all temporary files
-      /*await cleanupFiles(
-        tempFilePath,
-        tempDataPath,
-        path.join(tempDir, 'temp_data.json')
-      );*/
-      
-      debug('Error in analyze endpoint:', error);
-      const errorResponse = handleErrorResponse(error, '');
-      return res.json(errorResponse);
+    if (error.message === 'Request cancelled') {
+      res.status(499).json({ error: 'Request cancelled by client' });
+    } else {
+      res.status(500).json({ error: error.message });
     }
   }
 });

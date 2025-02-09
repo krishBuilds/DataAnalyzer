@@ -155,6 +155,30 @@
             <!-- For regular text messages -->
             <span v-else>{{ message.text }}</span>
             
+            <!-- Code block if present -->
+            <div v-if="message.code" class="code-block-container">
+              <div class="code-header" @click="toggleCode(index)">
+                <span class="code-label">Generated Code</span>
+                <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index] }">▼</span>
+              </div>
+              <div class="code-block-wrapper" v-show="expandedCodes[index]">
+                <MonacoEditor
+                  :value="message.code"
+                  :data="gridOperations.getData()"
+                  @dataframe-update="handleDataFrameUpdate"
+                  :language="'python'"
+                  :theme="'vs-dark'"
+                  class="code-editor"
+                  :debug-mode="debugMode"
+                />
+              </div>
+            </div>
+
+            <!-- Operation completed message -->
+            <div v-if="message.operationCompleted" class="operation-status">
+              Operation completed.
+            </div>
+            
             <!-- Add suggestions with checkboxes -->
             <div v-if="message.suggestions" class="suggestions-container">
               <div class="suggestions-header">Cleaning Suggestions:</div>
@@ -192,52 +216,27 @@
               </div>
             </div>
             
-            <!-- Code block if present -->
-            <div v-if="message.code" class="code-block-container">
-              <div class="code-header" @click="toggleCode(index)">
-                <span class="code-label">Generated Code</span>
-                <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index] }">▼</span>
-              </div>
-              <div class="code-block-wrapper" v-show="expandedCodes[index]">
-                <MonacoEditor
-                  :value="message.code"
-                  :data="gridOperations.getData()"
-                  @dataframe-update="handleDataFrameUpdate"
-                  :language="'python'"
-                  :theme="'vs-dark'"
-                  class="code-editor"
-                  :debug-mode="debugMode"
-                />
-              </div>
-            </div>
-            
-            <!-- Error display -->
+            <!-- Error display with retry option -->
             <div v-if="message.error" class="error-block">
               <div class="error-title">
                 <span class="error-icon">❌</span>
                 <span>Error</span>
               </div>
               
-              <!-- Python Error Traceback -->
-              <div v-if="message.error.pythonError" class="python-error">
-                <div class="error-header">Python Error:</div>
-                <pre class="error-traceback">{{ message.error.pythonError }}</pre>
-              </div>
-
-              <!-- General Error Message -->
               <div class="error-message">
                 {{ message.error.message || message.error }}
               </div>
 
-              <!-- Code Block for Error -->
-              <div v-if="message.error.code" class="code-block-container">
-                <div class="code-header" @click="toggleCode(index)">
-                  <span class="code-label">Error Code</span>
-                  <span class="toggle-icon" :class="{ 'expanded': expandedCodes[index] }">▼</span>
-                </div>
-                <div class="code-block-wrapper" v-show="expandedCodes[index]">
-                  <pre class="code-block"><code>{{ message.error.code }}</code></pre>
-                </div>
+              <!-- Add retry button -->
+              <div class="error-actions">
+                <button 
+                  @click="retryOperation(message)" 
+                  class="retry-button"
+                  v-if="message.lastUserQuestion"
+                >
+                  <i class="fas fa-redo"></i>
+                  Retry
+                </button>
               </div>
             </div>
           </div>
@@ -255,34 +254,28 @@
           </div>
         </div>
         <div class="chat-input-container">
-          <div class="input-group">
-            <textarea 
-              v-model="userMessage"
-              @keydown.enter.exact.prevent="sendMessage"
-              placeholder="Type your message..."
-              :disabled="loading"
-            ></textarea>
-            <div class="controls-group">
-              <button 
-                @click="sendMessage" 
-                :disabled="loading || !userMessage.trim()"
-                class="send-button"
-              >
-                <i class="fas fa-paper-plane"></i>
-              </button>
-              <label class="toggle-switch">
-                <input 
-                  type="checkbox" 
-                  :checked="debugMode"
-                  @change="$emit('update:debugMode', $event.target.checked)"
-                />
-                <span class="slider">
-                  <i class="fas fa-bug"></i>
-                </span>
-                <small class="debug-label">Debug</small>
-              </label>
-            </div>
-          </div>
+          <textarea
+            v-model="userMessage"
+            class="chat-input"
+            placeholder="Type your message..."
+            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.shift.exact="newLine"
+          ></textarea>
+          <button 
+            class="send-button" 
+            @click="sendMessage"
+            :disabled="!userMessage.trim() || loading"
+          >
+            <i class="fas fa-paper-plane"></i>
+          </button>
+          <button 
+            v-if="loading" 
+            class="cancel-button"
+            @click="cancelOperation"
+            title="Cancel operation"
+          >
+            <i class="fas fa-times"></i>
+          </button>
         </div>
       </div>
     </div>
@@ -399,6 +392,8 @@ export default {
       dataTitle: null,
       streamingMessage: '',
       isStreaming: false,
+      currentRequest: null,
+      isProcessing: false,
     }
   },
   created() {
@@ -689,79 +684,105 @@ export default {
     async sendMessage() {
       if (!this.userMessage.trim() || this.loading) return;
       
-      this.lastUserQuestion = this.userMessage.trim();
-      const sampleData = this.getSampleRows(5);
-      
-      const userMessage = {
-        type: 'user',
-        text: this.userMessage,
-        timestamp: new Date(),
-        sampleData: {
-          headers: this.gridOperations.getHeaders(),
-          rows: sampleData
-        }
-      };
-      
-      this.chatMessages.push(userMessage);
-      
-      // Record user message if recording is active
-      if (this.isRecording) {
-        this.chatFlows.recordMessage(userMessage);
-      }
-      
+      const message = this.userMessage.trim();
+      this.lastUserQuestion = message;
       this.userMessage = '';
+      
+      await this.processUserMessage(message);
+    },
+
+    async processUserMessage(message, isRetry = false) {
+      if (!isRetry) {
+        this.chatMessages.push({
+          type: 'user',
+          text: message
+        });
+      }
+
       this.loading = true;
-      this.error = null;
+      this.currentRequest = axios.CancelToken.source();
 
       try {
-        const selectedRowsData = this.getSelectedRowsData();
-        const response = await this.executeAnalysis(userMessage.text, selectedRowsData);
-        
-        if (response.data.error) {
-          // Display the first error
-          this.displayError({
-            data: {
-              error: {
-                message: response.data.error.message,
-                code: response.data.error.code
-              }
-            }
-          });
-
-          // Attempt retry with error context
-          const retryResponse = await this.executeAnalysis(
-            userMessage.text,
-            selectedRowsData,
-            response.data.error
-          );
-
-          if (retryResponse.data.error) {
-            this.displayError(retryResponse);
-          } else {
-            await this.handleSuccessResponse(retryResponse);
+        const response = await axios.post('/api/analyze', 
+          { 
+            question: message,
+            data: this.gridOperations.getData(),
+            headers: this.gridOperations.getHeaders(),
+            selectedRows: this.gridOperations.getSelectedRows()
+          },
+          {
+            cancelToken: this.currentRequest.token
           }
+        );
+        
+        // Check if response needs streaming
+        if (response.data.analysis?.startsWith('{')) {
+          await this.handleStreamingAnalysis(response);
         } else {
           await this.handleSuccessResponse(response);
-          
-          // Record bot response if recording is active
-          if (this.isRecording) {
-            this.chatFlows.recordMessage({
-              type: 'bot',
-              text: response.data.analysis,
-              code: response.data.code,
-              plot_html: response.data.plot_html,
-              suggestions: response.data.suggestions
-            });
-          }
+          // Only scroll to bottom for non-streaming responses
+          this.$nextTick(() => {
+            this.scrollToBottom();
+          });
         }
+
       } catch (error) {
-        this.handleError(error);
+        if (axios.isCancel(error)) {
+          this.chatMessages.push({
+            type: 'bot',
+            text: 'Operation cancelled',
+            isCancelled: true
+          });
+        } else {
+          this.handleError(error, message);
+        }
       } finally {
+        this.loading = false;
+        this.currentRequest = null;
+      }
+    },
+
+    handleError(error, message) {
+      if (this.chatMessages[this.chatMessages.length - 1]?.isProcessing) {
+        this.chatMessages.pop();
+      }
+
+      const errorMessage = {
+        type: 'bot',
+        text: 'An error occurred:',
+        error: {
+          message: error.response?.data?.error?.message || error.message,
+          code: error.response?.data?.error?.code,
+          pythonError: error.response?.data?.error?.pythonError
+        },
+        lastUserQuestion: message
+      };
+
+      console.error('Operation error:', error);
+      this.chatMessages.push(errorMessage);
+    },
+
+    async retryOperation(message) {
+      if (this.loading || !message.lastUserQuestion) return;
+      
+      this.isRetrying = true;
+      const index = this.chatMessages.findIndex(m => m === message);
+      if (index !== -1) {
+        this.chatMessages.splice(index, 1);
+      }
+      
+      await this.processUserMessage(message.lastUserQuestion, true);
+      this.isRetrying = false;
+    },
+
+    cancelOperation() {
+      if (this.currentRequest && this.loading) {
+        this.currentRequest.cancel('Operation cancelled by user');
         this.loading = false;
       }
     },
 
-    async executeAnalysis(question, selectedRowsData, previousError = null) {
+    async executeAnalysis(question, selectedRowsData, previousError = null, config = {}) {
       const payload = {
         question,
         data: this.gridOperations.getData(),
@@ -774,7 +795,7 @@ export default {
         payload.previousError = previousError;
       }
 
-      return await axios.post('/api/analyze', payload);
+      return await axios.post('/api/analyze', payload, config);
     },
 
     renderMarkdown(text) {
@@ -786,125 +807,97 @@ export default {
     async handleSuccessResponse(response) {
       try {
         if (response.data.data) {
-          this.addToHistory({
-            data: this.gridOperations.getData(),
-            headers: this.gridOperations.getHeaders()
-          });
-          
-          const updatedData = this.gridOperations.updateFromServerResponse(response.data);
-          await this.updateTableData(updatedData.data);
-          this.changedRows = updatedData.changedRows || [];
+          await this.updateTableData(response.data.data);
         }
 
-        // First push code message if code exists
-        if (response.data.code) {
-          this.chatMessages.push({
-            type: 'bot',
-            code: response.data.code,
-            showCodeBlock: true
-          });
-        }
-
-        // Create the bot message for other content
+        // Regular response handling
         const botMessage = {
           type: 'bot',
-          text: response.data.analysis?.startsWith('{') ? '' : (response.data.analysis || 'Analysis completed')
+          text: response.data.analysis || 'Analysis completed',
+          code: response.data.code,
+          operationCompleted: true,
+          lastUserQuestion: this.userMessage
         };
 
-        // Add plot HTML if present
         if (response.data.plot_html) {
           botMessage.plot_html = response.data.plot_html;
         }
 
-        // Add suggestions if present
         if (response.data.suggestions) {
           botMessage.suggestions = response.data.suggestions;
           botMessage.selectedSuggestions = response.data.suggestions.map(() => true);
-          botMessage.context = response.data.context;
         }
 
-        // Only push message if it has content other than code
-        if (botMessage.plot_html || botMessage.suggestions || botMessage.text) {
-          this.chatMessages.push(botMessage);
-        }
+        this.chatMessages.push(botMessage);
+        await this.$nextTick();
+        this.scrollToBottom();
 
-    // If it's a JSON analysis, add streaming response
-    if (response.data.analysis?.startsWith('{')) {
+      } catch (error) {
+        console.error('Error in handleSuccessResponse:', error);
+        this.handleError(error);
+      }
+    },
+
+    // Add this method to handle streaming analysis
+    async handleStreamingAnalysis(response) {
+      // Create initial bot message with streaming state
       const streamingMessage = {
         type: 'bot',
         text: '',
         isStreaming: true,
-        isMarkdown: true
+        isMarkdown: true,
+        code: response.data.code,
+        lastUserQuestion: this.userMessage,
+        operationCompleted: false
       };
       
       this.chatMessages.push(streamingMessage);
 
       try {
-        //const source = new EventSource('/api/stream-analysis');
+        const { data } = await axios.post('/api/stream-analysis', {
+          analysis: response.data.analysis,
+          userQuestion: this.userMessage,
+          pythonCode: response.data.code,
+          headers: this.gridOperations.getHeaders(),
+          sampleData: this.getSampleRows(5)
+        });
+
+        // Update the streaming message with final content
+        streamingMessage.text = typeof data === 'string' ? data : 'Error: Unexpected response format';
+        streamingMessage.isStreaming = false;
+        streamingMessage.operationCompleted = true;
         
-        await axios({
-          method: 'post',
-          url: '/api/stream-analysis',
-          data: {
-            analysis: response.data.analysis,
-            userQuestion: this.lastUserQuestion,
-            pythonCode: response.data.code, // Add Python code to context
-            headers: this.gridOperations.getHeaders(),
-            sampleData: this.getSampleRows(5)
-          },
-          responseType: 'text',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream'
-          },
-          onDownloadProgress: (progressEvent) => {
-            const chunk = progressEvent.event.target.response.slice(streamingMessage.text.length);
-            if (chunk) {
-              // Update message text incrementally
-              streamingMessage.text += chunk;
-              
-              // Force scroll update
-              this.$nextTick(() => {
-                const chatContainer = this.$refs.chatMessages;
-                if (chatContainer) {
-                  const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop <= chatContainer.clientHeight + 100;
-                  if (isAtBottom) {
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                  }
-                }
-              });
-            }
-          }
+        // Handle any data updates or other response processing
+        if (response.data.data) {
+          await this.updateTableData(response.data.data);
+        }
+
+        // Add plot if present
+        if (response.data.plot_html) {
+          streamingMessage.plot_html = response.data.plot_html;
+        }
+
+        // Add suggestions if present
+        if (response.data.suggestions) {
+          streamingMessage.suggestions = response.data.suggestions;
+          streamingMessage.selectedSuggestions = response.data.suggestions.map(() => true);
+        }
+
+        // Only scroll to bottom after streaming is complete
+        this.$nextTick(() => {
+          this.scrollToBottom();
         });
 
       } catch (error) {
         console.error('Streaming error:', error);
         streamingMessage.text = '### Error\nFailed to process analysis';
         streamingMessage.error = true;
-      } finally {
         streamingMessage.isStreaming = false;
-      }
-    }
         
-        // Update chat scroll position
-        await nextTick();
-        if (this.$refs.chatMessages) {
-          this.$refs.chatMessages.scrollTop = this.$refs.chatMessages.scrollHeight;
-        }
-        
-        // Record bot message if recording is active
-        if (this.isRecording) {
-          this.chatFlows.recordMessage({
-            type: 'bot',
-            text: response.data.analysis,
-            code: response.data.code,
-            plot_html: response.data.plot_html,
-            suggestions: response.data.suggestions
-          });
-        }
-      } catch (error) {
-        console.error('Error in handleSuccessResponse:', error);
-        this.handleError(error);
+        // Scroll to bottom on error
+        this.$nextTick(() => {
+          this.scrollToBottom();
+        });
       }
     },
 
@@ -1126,18 +1119,7 @@ export default {
       }
     },
 
-    handleError(error) {
-      const errorMessage = {
-        type: 'bot',
-        text: 'An error occurred:',
-        error: {
-          message: error.response?.data?.error?.message || error.response?.data?.error || error.message,
-          code: error.response?.data?.error?.code
-        }
-      };
-      this.chatMessages.push(errorMessage);
-      console.error('Operation error:', error);
-    },
+  
 
     exportData(format) {
       if (format === 'csv') {
@@ -1391,17 +1373,17 @@ export default {
       }
 
       try {
-        // Update hotSettings
+        // Update grid operations first
+        this.gridOperations.updateData(data);
+        this.gridOperations.saveState();
+
+        // Update Handsontable settings
         this.hotSettings = {
           ...this.hotSettings,
           data: data,
-          colHeaders: Object.keys(data[0]),
-          columns: Object.keys(data[0]).map(key => ({ data: key }))
+          colHeaders: this.gridOperations.getHeaders(),
+          columns: this.gridOperations.getColumns()
         };
-
-        // Update grid operations
-        this.gridOperations.updateData(data);
-        this.gridOperations.saveState();
 
         // Force table refresh
         await this.$nextTick();
@@ -1447,10 +1429,6 @@ export default {
       if (this.$refs.hotTable?.hotInstance) {
         this.$refs.hotTable.hotInstance.render();
       }
-    },
-
-    toggleDebugMode() {
-      this.debugMode = !this.debugMode;
     },
 
     clearData() {
@@ -1856,6 +1834,40 @@ export default {
       if (arr1.length !== arr2.length) return true;
       return arr1.some((item, index) => item !== arr2[index]);
     },
+
+    cancelRequest() {
+      if (this.currentRequest) {
+        this.currentRequest.cancel('Request cancelled by user');
+        this.currentRequest = null;
+        this.loading = false;
+      }
+    },
+
+    getTableState() {
+      return {
+        data: this.gridOperations.getData(),
+        headers: this.gridOperations.getHeaders(),
+        selectedRows: Array.from(this.gridOperations.getSelectedRows()),
+        changedRows: Array.from(this.gridOperations.getChangedRows())
+      };
+    },
+
+    // updateTableData(data) {
+    //   this.gridOperations.updateData(data);
+    //   this.hotSettings = {
+    //     ...this.hotSettings,
+    //     data: data,
+    //     colHeaders: this.gridOperations.getHeaders(),
+    //     columns: this.gridOperations.getColumns()
+    //   };
+    //   this.$nextTick(() => {
+    //     if (this.$refs.hotTable?.hotInstance) {
+    //       this.$refs.hotTable.hotInstance.loadData(data);
+    //       this.$refs.hotTable.hotInstance.render();
+    //     }
+    //   });
+    // },
+
   },
 
   // Add watcher for showFlowsOverlay
@@ -2406,31 +2418,8 @@ export default {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  text-align: left;
-  margin: 0;
-  margin-bottom: 15px;
-  
-  /* Add custom scrollbar for chat messages only */
-  &::-webkit-scrollbar {
-    width: 8px;
-  }
-  
-  &::-webkit-scrollbar-track {
-    background: #f1f1f1;
-  }
-  
-  &::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 4px;
-  }
-  
-  &::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-  }
+  padding: 20px;
+  height: calc(100vh - 180px); /* Increased height for chat messages */
 }
 
 .table-header-row {
@@ -2495,65 +2484,101 @@ export default {
 }
 
 .chat-input-container {
-  position: sticky;
-  bottom: 0;
-  background: white;
-  padding: 16px;
-  padding-bottom: 12px;
+  position: relative;
+  padding: 10px;
+  background: #fff;
   border-top: 1px solid #e0e0e0;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: auto;
-}
-
-.input-group {
-  display: flex;
   align-items: flex-start;
-  gap: 8px;
-  width: 100%;
+  gap: 10px;
 }
 
-.controls-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: center;
-}
-
-textarea {
+.chat-input {
   flex: 1;
-  min-height: 44px;
-  max-height: 120px;
+  min-height: 60px; /* Increased height */
+  max-height: 150px;
   padding: 12px;
-  border: 1px solid #ddd;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   resize: vertical;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.5;
+  background: #fff;
+  transition: border-color 0.2s;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: #4a90e2;
 }
 
 .send-button {
-  width: 44px;
-  height: 44px;
-  padding: 0;
+  padding: 12px 20px;
+  background: #4a90e2;
+  color: white;
   border: none;
   border-radius: 8px;
-  background: #1565c0; /* Match usermessage color */
-  color: white;
   cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+  height: 60px; /* Match input height */
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.2s;
 }
 
-.send-button:hover:not(:disabled) {
-  background: #0d47a1;
+.send-button:hover {
+  background: #357abd;
 }
 
-.send-button:disabled {
-  background: #ccc;
+.cancel-button {
+  padding: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  height: 60px; /* Match input height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #dc3545;
+  transition: color 0.2s;
+}
+
+.cancel-button:hover {
+  color: #bd2130;
+}
+
+.cancel-button i {
+  font-size: 18px;
+}
+
+.controls-group {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cancel-button i {
+  color: #ff4444;
+  font-size: 14px;
+  transition: opacity 0.2s ease;
+}
+
+.cancel-button.inactive {
+  pointer-events: none;
+}
+
+.cancel-button.inactive i {
+  opacity: 0.3;
+}
+
+.cancel-button:not(.inactive):hover {
+  background: rgba(255, 68, 68, 0.1);
 }
 
 .toggle-switch {
@@ -3352,17 +3377,6 @@ textarea {
   }
 }
 
-.chat-input-container {
-  position: sticky;
-  bottom: 0;
-  background: white;
-  padding: 16px;
-  border-top: 1px solid #e0e0e0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
 .input-wrapper {
   display: flex;
   gap: 8px;
@@ -3558,15 +3572,6 @@ textarea {
   display: flex;
   gap: 8px;
   margin-left: 8px;
-}
-
-.chat-input-container {
-  display: flex;
-  padding: 16px;
-  border-top: 1px solid #ddd;
-  background: white;
-  align-items: flex-start;
-  margin: 0;
 }
 
 .debug-toggle {
@@ -4153,16 +4158,6 @@ textarea {
   align-items: flex-start;
 }
 
-.chat-input {
-  flex: 1;
-  min-height: 44px;
-  padding: 12px;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  resize: vertical;
-  font-family: inherit;
-}
-
 .send-btn {
   width: 44px;
   height: 44px;
@@ -4303,6 +4298,191 @@ textarea {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+.cancel-button.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-button:not(.disabled):hover {
+  background: rgba(255, 68, 68, 0.1);
+}
+
+.controls-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-input-container textarea {
+  flex: 1;
+  min-height: 40px;
+  max-height: 120px;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Update chat input container styles */
+.chat-input-container {
+  padding: 16px;
+  border-top: 1px solid #ddd;
+  background: white;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.send-button:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+.send-button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.cancel-button:hover:not(.disabled) {
+  background: #f8f9fa;
+  border-color: #ff4444;
+}
+
+.cancel-button.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Update code block container styles */
+.code-block-container {
+  margin-top: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.code-block-wrapper {
+  height: 300px;
+}
+
+/* Ensure operation completed message is part of the same message */
+.message {
+  margin-bottom: 16px;
+}
+
+.message .operation-status {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #eee;
+  color: #28a745;
+}
+
+/* Update error block styles */
+.error-block {
+  margin: 12px 0;
+  background: #f8f8f8;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #ffcdd2;
+}
+
+.error-title {
+  background: #ffebee;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #d32f2f;
+}
+
+.error-message {
+  padding: 12px;
+  color: #d32f2f;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.code-block {
+  margin: 0;
+  padding: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  overflow-x: auto;
+  font-family: 'Fira Code', monospace;
+}
+
+.processing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: #666;
+}
+
+.loading-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.loading-dots span {
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+  animation: dots 1.5s infinite;
+}
+
+.loading-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.loading-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dots {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+.operation-status {
+  margin-top: 8px;
+  color: #28a745;
+  font-weight: 500;
+}
+
+.input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+}
+
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cancel-button.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
 

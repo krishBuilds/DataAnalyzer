@@ -10,21 +10,14 @@
           <div 
             class="nav-item" 
             :class="{ active: currentPage === 'data-table' }"
-            @click="currentPage = 'data-table'"
+            @click="handleNavigation('data-table')"
           >
             <i class="fas fa-table"></i>
           </div>
           <div 
             class="nav-item" 
-            :class="{ active: currentPage === 'analysis-board' }"
-            @click="currentPage = 'analysis-board'"
-          >
-            <i class="fas fa-chart-line"></i>
-          </div>
-          <div 
-            class="nav-item" 
             :class="{ active: currentPage === 'dashboard-generator' }"
-            @click="currentPage = 'dashboard-generator'"
+            @click="handleNavigation('dashboard-generator')"
           >
             <i class="fas fa-sliders"></i>
           </div>
@@ -34,24 +27,11 @@
       <!-- Main Content Area -->
       <div class="main-content">
         <keep-alive>
-          <ChatAnalysisBoard 
-            v-if="currentPage === 'analysis-board' && !showAnalysisDashboard"
-            @start-analysis="handleAnalysisStart"
-            @file-uploaded="handleFileUpload"
+          <DataTable 
+            v-if="currentPage === 'data-table'" 
+            ref="dataTable"
           />
         </keep-alive>
-        <keep-alive>
-          <AnalysisDashboard 
-            v-if="currentPage === 'analysis-board' && showAnalysisDashboard"
-            :initialQuery="analysisQuery"
-            :uploadedFile="analysisFile"
-            ref="dashboard"
-          />
-        </keep-alive>
-        <DataTable 
-          v-if="currentPage === 'data-table'" 
-          ref="dataTable"
-        />
         <DashboardGenerator
           v-if="currentPage === 'dashboard-generator'"
           @generate-dashboard="handleDashboardGeneration"
@@ -63,48 +43,33 @@
 
 <script>
 import DataTable from './components/TableChat.vue'
-import ChatAnalysisBoard from './components/ChatAnalysisBoard.vue'
-import AnalysisDashboard from './components/AnalysisDashboard.vue'
 import DashboardGenerator from './components/DashboardGenerator.vue'
 
 export default {
   name: 'App',
   components: {
     DataTable,
-    ChatAnalysisBoard,
-    AnalysisDashboard,
     DashboardGenerator,
   },
   data() {
     return {
-      currentPage: 'analysis-board',
-      showAnalysisDashboard: false,
-      analysisQuery: '',
-      analysisFile: null,
+      currentPage: 'data-table',
       dashboardConfig: null
     }
   },
   methods: {
-    handleAnalysisStart(data) {
-      this.analysisQuery = data.query;
-      this.analysisFile = data.file;
-      this.showAnalysisDashboard = true;
+    handleNavigation(page) {
+      if (this.currentPage === 'data-table' && page === 'dashboard-generator') {
+        // Save table state before switching
+        const tableState = this.$refs.dataTable.getTableState();
+        sessionStorage.setItem('tableState', JSON.stringify(tableState));
+      }
+      this.currentPage = page;
     },
     
-    handleFileUpload(fileInfo) {
-      // Only handle file upload if dashboard is visible
-      if (this.showAnalysisDashboard && this.$refs.dashboard) {
-        this.$refs.dashboard.handleFileData(fileInfo);
-      } else {
-        // Store file info for when dashboard becomes visible
-        this.analysisFile = fileInfo;
-        this.showAnalysisDashboard = true;
-      }
-    },
     handleDashboardGeneration(config) {
       this.dashboardConfig = config;
-      this.currentPage = 'analysis-board';
-      this.showAnalysisDashboard = true;
+      this.currentPage = 'data-table';
     }
   },
   watch: {
@@ -118,17 +83,6 @@ export default {
             this.$refs.dataTable.updateTableData(state.data);
           }
           sessionStorage.removeItem('tableState');
-        }
-      }
-      else if (newPage === 'dashboard-generator') {
-        const savedState = sessionStorage.getItem('dashboardState');
-        if (savedState) {
-          const state = JSON.parse(savedState);
-          await this.$nextTick();
-          if (this.$refs.dashboardGenerator) {
-            this.$refs.dashboardGenerator.restoreState(state);
-          }
-          sessionStorage.removeItem('dashboardState');
         }
       }
     }
